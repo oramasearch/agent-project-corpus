@@ -21,6 +21,8 @@ from typing import Any
 
 from openai import OpenAI
 
+from agent_project_corpus.node import Node, land_profile, replay
+
 PROMPT_VERSION = "v1"
 PROMPTS = Path(__file__).parent / "prompts"
 
@@ -103,6 +105,13 @@ def main() -> int:
     args = parser.parse_args()
 
     client = OpenAI()
+    # Without a node the observations stay written, which is the defect #989 describes. Allowed,
+    # but the corpus records which examples were actually observed so nobody has to guess later.
+    node: Node | None = None
+    if os.environ.get("ZETTA_BASE_URL") and os.environ.get("ZETTA_TOKEN"):
+        node = Node()
+    else:
+        print("no ZETTA_BASE_URL/ZETTA_TOKEN — observations will be WRITTEN, not observed (#989)")
     system = (PROMPTS / f"{PROMPT_VERSION}.md").read_text()
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / f"project-sft-{PROMPT_VERSION}.jsonl"
@@ -123,6 +132,24 @@ def main() -> int:
         if example is None:
             print(f"[{index+1}/{args.examples}] unparseable — skipped"); rejected += 1; continue
 
+        # Make the observations REAL (#989). The generating model writes observations that are
+        # coherent by construction — one author wrote both the observation and the call that
+        # responded to it — which is exactly the property a live node does not have. Land the
+        # profile, replay the read calls, and keep what the node actually returned.
+        if node is not None:
+            try:
+                land_profile(node, example.get("profile") or {}, Path("/tmp/apc-staging"))
+                example["trajectory"], replay_problems = replay(node, example["trajectory"])
+                example["observations_real"] = not replay_problems
+            except Exception as error:  # noqa: BLE001
+                replay_problems = [f"could not land or replay: {str(error)[:120]}"]
+                example["observations_real"] = False
+            if replay_problems:
+                print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                      f"{replay_problems[0]}")
+                rejected += 1
+                continue
+
         problems = defects(example)
         if problems:
             print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · {problems[0]}")
@@ -138,5 +165,7 @@ def main() -> int:
         print(f"[{index+1}/{args.examples}] {example['example_id']} · {example.get('kind')} · "
               f"{len(example['trajectory'])} calls · kept")
 
+    if node is not None:
+        node.close()
     print(f"kept={kept} ({mutations} mutations) rejected={rejected} -> {path}")
     return 0

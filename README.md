@@ -59,6 +59,23 @@ its correctness profile is training data; one that merely looks plausible is not
 the same ones RLVR will use, so an SFT example that grades well is already in the shape the reward
 expects.
 
+## The observations are real (#989)
+
+Each example's profile is **landed on a live node** and the trajectory's read calls are **replayed
+against it**, so `observation` is what `/v1` actually returned rather than what the generating
+model imagined.
+
+That matters more than it sounds. A written observation is coherent by construction — one author
+wrote both the observation and the call that responded to it — which is exactly the property a real
+node does not have. Replaying immediately caught trajectories calling `get_dataset` on tables their
+own profile never declared: a 404 from the node, invisible in prose.
+
+Null fractions are honoured when landing, so a `because` pointing at *"11% null ids"* is pointing
+at data that really is.
+
+Examples record `observations_real`. Running without `ZETTA_BASE_URL` still works but leaves the
+observations written, and says so.
+
 ## Status
 
-Nothing generated yet.
+Generating. Nothing trained on it yet.
