@@ -31,6 +31,15 @@ class Node:
             timeout=180.0)
 
     def read(self, capability: str, **params: Any) -> Any:
+        # get_dataset names its table `dataset` (a model also writes `table`) and takes the
+        # database apart: "datasets.accounts" is database "datasets", dataset "accounts".
+        if capability == "get_dataset":
+            name = str(params.pop("table", "") or params.get("dataset") or "")
+            if name:
+                params["dataset"] = name
+            if "." in name and "database" not in params:
+                database, table = name.split(".", 1)
+                params = {**params, "database": database, "dataset": table}
         response = self.client.get(f"/v1/{capability}", params=params)
         response.raise_for_status()
         return response.json().get("value", response.json())

@@ -66,3 +66,19 @@ def test_a_change_request_asks_for_a_mutation():
 def test_an_empty_workspace_is_told_to_load_data():
     answer = service.run_turn({"request": "x"}, Scripted("{}"), Workspace([]), "m")
     assert not answer["ok"] and "load data" in answer["error"]
+
+
+def test_a_qualified_dataset_name_is_taken_apart_for_get_dataset():
+    from agent_project_corpus.node import Node
+    sent = {}
+
+    class Client:
+        def get(self, path, params):
+            sent.update(params)
+            return type("R", (), {"raise_for_status": lambda self: None,
+                                  "json": lambda self: {"ok": True, "value": {}}})()
+
+    node = Node.__new__(Node)
+    node.client = Client()
+    node.read("get_dataset", table="datasets.ux_review_churn")
+    assert sent == {"dataset": "ux_review_churn", "database": "datasets"}
