@@ -79,3 +79,18 @@ observations written, and says so.
 ## Status
 
 Generating. Nothing trained on it yet.
+
+## In lake (lake#263)
+
+A library agent of lake: a person asks it to record how a pipeline is built (or changed, a
+`mutate` example) **on their own data**. One turn reads the workspace through lake's read-only path
+(`list_datasets`), asks for one example whose profile is that workspace (only its real tables and
+columns), replays the example's read calls against it so every observation is what the workspace
+returned (#989), and checks `defects`. `land_profile` is not used: nothing is landed or written in
+the person's workspace, and the example is answered as `{reply, result: {kind: project_example,
+example}}`, never added to the corpus.
+
+- `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
+- `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
+- `Dockerfile`: private image `oramasearch/agent-project-corpus`.
+- Tests: `uv run --group dev pytest`.

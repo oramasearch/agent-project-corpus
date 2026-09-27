@@ -23,11 +23,11 @@ import httpx
 class Node:
     """Read/act against a live Zetta node. Raises rather than returning a plausible empty result."""
 
-    def __init__(self) -> None:
-        self.base = os.environ["ZETTA_BASE_URL"].rstrip("/")
+    def __init__(self, base_url: str | None = None, token: str | None = None) -> None:
+        self.base = (base_url or os.environ["ZETTA_BASE_URL"]).rstrip("/")
         self.client = httpx.Client(
             base_url=self.base,
-            headers={"Authorization": f"Bearer {os.environ['ZETTA_TOKEN']}"},
+            headers={"Authorization": f"Bearer {token or os.environ['ZETTA_TOKEN']}"},
             timeout=180.0)
 
     def read(self, capability: str, **params: Any) -> Any:
