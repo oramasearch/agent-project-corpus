@@ -118,6 +118,17 @@ def compiled_pipeline_defects(
     return []
 
 
+def run_defects(run: Any) -> list[str]:
+    if not isinstance(run, dict):
+        return ["run did not return a trainer result object"]
+    if run.get("engine") == "structural":
+        return ["run was structural and trained no methodology"]
+    status = str(run.get("status") or "").lower()
+    if status in {"failed", "cancelled", "canceled"}:
+        return [f"the methodology run ended with status `{status}`"]
+    return []
+
+
 def _parse(text: str | None) -> dict[str, Any] | None:
     if not text:
         return None
@@ -172,6 +183,8 @@ def defects(example: dict[str, Any]) -> list[str]:
         problems.append("the trajectory must compile exactly one pipeline with compile_intent")
     elif str((compile_steps[0].get("args") or {}).get("methodology") or "") != methodology:
         problems.append("compile_intent does not carry the example's methodology")
+    elif compile_steps[0] is not trajectory[-1]:
+        problems.append("compile_intent must be the final generated call before replay runs it")
 
     if not str(example.get("reply", "")).strip():
         problems.append("no reply — the user is told nothing about what was built")
@@ -270,6 +283,17 @@ def main() -> int:
             rejected += 1
             continue
         example["pipeline"] = example["compiled_pipeline"]
+        example["run"] = next(
+            step["observation"]
+            for step in example["trajectory"]
+            if step.get("call") == "run"
+        )
+        run_problems = run_defects(example["run"])
+        if run_problems:
+            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                  f"{run_problems[0]}")
+            rejected += 1
+            continue
 
         example["prompt_version"] = PROMPT_VERSION
         with path.open("a") as handle:

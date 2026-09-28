@@ -38,8 +38,8 @@ user's work.
 
 Read `list_methodologies` at the start of each generation turn. Record only an entry marked
 `runnable`, require its `model_kinds` to contain the example's `model_kind`, and replay
-`compile_intent` with the selected methodology. The engine's compiled graph is the pipeline proof;
-do not maintain a runnable-methodology list here.
+`compile_intent` with the selected methodology followed by `run`. The compiled graph and trainer
+response are the proof; do not maintain a runnable-methodology list here.
 
 Only `unknown_capability` activates the pre-registry fallback, where M-1 GBDT classification is the
 only runnable methodology. Name this fallback in the answer.

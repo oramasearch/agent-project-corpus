@@ -63,7 +63,15 @@ class Workspace:
 
     def act(self, capability, **body):
         self.acts.append((capability, body))
+        if capability == "run":
+            return {
+                "run_id": "run-1",
+                "engine": "M-1",
+                "status": "succeeded",
+                "metrics": {"held_out_auc": 0.82},
+            }
         return {
+            "project": body["project"],
             "graph": "workspace churn",
             "methodology": body["methodology"],
             "runnable": True,
@@ -86,10 +94,12 @@ def test_a_runnable_methodology_is_compiled_and_recorded():
     assert answer["result"]["example"]["model_kind"] == "gbdt"
     assert answer["result"]["example"]["compiled_pipeline"]["methodology"] == "M-1"
     assert answer["result"]["example"]["pipeline"]["methodology"] == "M-1"
+    assert answer["result"]["example"]["run"]["metrics"]["held_out_auc"] == 0.82
     assert workspace.reads[0] == "list_methodologies"
     assert workspace.reads.count("list_datasets") >= 2, "listed, then replayed"
-    assert [capability for capability, _ in workspace.acts] == ["compile_intent"]
+    assert [capability for capability, _ in workspace.acts] == ["compile_intent", "run"]
     assert workspace.acts[0][1]["methodology"] == "M-1"
+    assert workspace.acts[1][1]["dataset_path"] == "datasets.ux_review_churn"
 
 
 def test_an_unsupported_methodology_is_rejected_with_its_issue():

@@ -134,6 +134,55 @@ REPLAYABLE_READS = {
 REPLAYABLE_ACTIONS = {"compile_intent"}
 
 
+def _run_compiled_pipeline(
+    node: Node,
+    trajectory: list[dict[str, Any]],
+    compile_step: dict[str, Any],
+    compiled: Any,
+) -> tuple[dict[str, Any], str | None]:
+    compile_args = compile_step.get("args") or {}
+    project = ""
+    graph = ""
+    if isinstance(compiled, dict):
+        project = str(compiled.get("project") or "")
+        graph = str(
+            compiled.get("graph_id")
+            or compiled.get("graph")
+            or compiled.get("name")
+            or ""
+        )
+    project = project or str(compile_args.get("project") or "")
+    arguments = {"project": project, "graph": graph}
+    dataset_step = next(
+        (step for step in trajectory if step.get("call") == "get_dataset"),
+        None,
+    )
+    if dataset_step:
+        dataset_args = dataset_step.get("args") or {}
+        dataset = dataset_args.get("dataset") or dataset_args.get("table")
+        if dataset:
+            arguments["dataset_path"] = str(dataset)
+    run_step = {
+        "call": "run",
+        "args": arguments,
+        "because": "compile_intent returned the runnable graph this call executes",
+    }
+    if not project or not graph:
+        run_step["observation"] = {
+            "error": "compile_intent did not return a project and graph reference"
+        }
+        run_step["observed"] = False
+        return run_step, "compile_intent did not return a project and graph reference for run"
+    try:
+        run_step["observation"] = node.act("run", **arguments)
+        run_step["observed"] = True
+        return run_step, None
+    except Exception as error:  # noqa: BLE001 - the failure is the observation
+        run_step["observation"] = {"error": str(error)[:200]}
+        run_step["observed"] = False
+        return run_step, f"`run` failed against the node: {str(error)[:120]}"
+
+
 def replay(
     node: Node,
     trajectory: list[dict[str, Any]],
@@ -160,6 +209,16 @@ def replay(
                 observed = node.read(call, **arguments)
             step["observation"] = observed
             step["observed"] = True
+            if call == "compile_intent":
+                run_step, run_problem = _run_compiled_pipeline(
+                    node,
+                    trajectory,
+                    step,
+                    observed,
+                )
+                trajectory.append(run_step)
+                if run_problem:
+                    problems.append(run_problem)
         except Exception as error:  # noqa: BLE001 — the failure IS the observation
             step["observation"] = {"error": str(error)[:200]}
             step["observed"] = False
@@ -174,4 +233,9 @@ def replay(
         problems.append(
             "the pipeline was not compiled by `compile_intent` with its methodology"
         )
+    if methodology and not any(
+        step.get("call") == "run" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append("the compiled methodology did not produce an observed run")
     return trajectory, problems

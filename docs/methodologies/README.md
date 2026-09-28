@@ -14,6 +14,10 @@ observation, `compiled_pipeline`, and the final `pipeline`. This makes the engin
 methodology-specific graph, rather than a shape imagined by the generating model, part of the
 recorded example.
 
+Replay then calls `run` with the compiled graph and the dataset inspected by `get_dataset`. The run
+response is stored as a trajectory observation and as `run`, so a kept example contains what the
+methodology runner returned. A compile or run failure rejects the example.
+
 An engine that returns `unknown_capability` for `list_methodologies` predates the registry. Only in
 that case, the generator treats M-1 GBDT classification as runnable and says that it used the legacy
 fallback. Other discovery failures are errors and do not relax the check.

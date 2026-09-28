@@ -82,7 +82,8 @@ example is written.
 At the start of each generation turn, the agent reads `list_methodologies`. Prompt v2 may select
 only an entry marked `runnable`, and each example names that entry's `methodology` id and one of its
 `model_kind` values. Replay executes `compile_intent` with the methodology and records the engine's
-compiled graph as an observation. An unrunnable methodology is rejected with its tracking issue.
+compiled graph as an observation, then runs that graph and records the trainer response. An
+unrunnable methodology is rejected with its tracking issue.
 
 If `list_methodologies` returns `unknown_capability`, the workspace predates the registry. The agent
 allows only legacy M-1 GBDT classification and says that it used this fallback. The runnable list is
@@ -97,9 +98,9 @@ Generating. Nothing trained on it yet.
 A library agent of lake: a person asks it to record how a pipeline is built (or changed, a
 `mutate` example) **on their own data**. One turn uses the workspace capability path
 (`list_methodologies`, then `list_datasets`), asks for one example whose profile is that workspace
-(only its real tables and columns), and replays the example's workspace reads and final
-`compile_intent` action so every observation is what the workspace returned (#989). `land_profile`
-is not used: no dataset is landed in the person's workspace, and the example is answered as
+(only its real tables and columns), and replays the example's workspace reads, compile, and run so
+every observation is what the workspace returned (#989). `land_profile` is not used: no dataset is
+landed in the person's workspace, and the example is answered as
 `{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 

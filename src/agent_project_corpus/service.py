@@ -29,6 +29,7 @@ from agent_project_corpus.agent import (
     discover_methodologies,
     methodology_context,
     methodology_defects,
+    run_defects,
 )
 from agent_project_corpus.node import Node, replay
 
@@ -95,6 +96,12 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                 str(example["model_kind"]),
             )
             example["pipeline"] = example["compiled_pipeline"]
+            example["run"] = next(
+                step["observation"]
+                for step in example["trajectory"]
+                if step.get("call") == "run"
+            )
+            problems += run_defects(example["run"])
     finally:
         if owned:
             node.close()
