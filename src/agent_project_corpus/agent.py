@@ -21,29 +21,112 @@ from typing import Any
 
 from openai import OpenAI
 
-from agent_project_corpus.node import Node, land_profile, replay
+from agent_project_corpus.node import Node, NodeError, land_profile, replay
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 PROMPTS = Path(__file__).parent / "prompts"
 
-# The correctness profile each methodology must satisfy, and what it must NOT carry. These mirror
-# the cores in zetta's plan_templates.cpp so an SFT example grades the same way the engine does.
-REQUIRED: dict[str, set[str]] = {
-    "gbdt": {"point_in_time", "leakage_free", "calibrated", "holdout"},
-    "classifier": {"point_in_time", "leakage_free", "calibrated", "holdout"},
-    "forecast": {"temporal_validation", "backtest", "holdout"},
-    "anomaly": {"threshold_governed"},
-    "retrieval": {"index", "grounded_in_data"},
-    "uplift": {"incrementality", "holdout"},
+LEGACY_M1 = {
+    "id": "M-1",
+    "name": "Tabular supervised learning",
+    "family": "The tabular decision core",
+    "model_kinds": ["gbdt", "classifier"],
+    "solutions": [],
+    "inputs": [],
+    "outputs": ["scores"],
+    "metrics": ["held-out metrics"],
+    "runnable": True,
+    "partial": False,
+    "issue": "",
 }
-FORBIDDEN: dict[str, set[str]] = {
-    # No probability to calibrate, and a calibrator fit on content-held-out rows re-introduces the
-    # leak temporal validation exists to prevent.
-    "forecast": {"calibrated"},
-    # No label to leak or calibrate.
-    "anomaly": {"calibrated", "leakage_free"},
-    "retrieval": {"calibrated", "leakage_free", "holdout"},
-}
+
+
+def _unknown_capability(error: Exception) -> bool:
+    if isinstance(error, NodeError):
+        return error.code == "unknown_capability"
+    code = str(getattr(error, "code", ""))
+    return code == "unknown_capability" or "unknown_capability" in str(error)
+
+
+def discover_methodologies(node: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Read the engine registry, or use the documented pre-registry M-1 behavior."""
+    try:
+        listed = node.read("list_methodologies") or {}
+    except Exception as error:  # noqa: BLE001 - capability errors define the fallback
+        if _unknown_capability(error):
+            return [dict(LEGACY_M1)], True
+        raise
+    methodologies = listed.get("methodologies") or []
+    return [entry for entry in methodologies if isinstance(entry, dict)], False
+
+
+def methodology_context(methodologies: list[dict[str, Any]], legacy: bool) -> str:
+    note = ""
+    if legacy:
+        note = (
+            "This workspace predates list_methodologies. Only M-1 with GBDT "
+            "classification may be used.\n"
+        )
+    return note + "Methodology registry for this turn:\n" + json.dumps(methodologies)
+
+
+def methodology_defects(
+    example: dict[str, Any],
+    methodologies: list[dict[str, Any]],
+) -> list[str]:
+    methodology_id = str(example.get("methodology") or "")
+    model_kind = str(example.get("model_kind") or "")
+    selected = next(
+        (entry for entry in methodologies if str(entry.get("id")) == methodology_id),
+        None,
+    )
+    if selected is None:
+        return [f"methodology `{methodology_id or 'missing'}` is not in list_methodologies"]
+    if not selected.get("runnable"):
+        issue = str(selected.get("issue") or "its implementation issue")
+        name = str(selected.get("name") or methodology_id)
+        return [f"{name} ({methodology_id}) is not supported yet: {issue}"]
+    model_kinds = {str(kind) for kind in selected.get("model_kinds") or []}
+    if model_kind not in model_kinds:
+        return [
+            f"model_kind `{model_kind or 'missing'}` is not runnable under "
+            f"{methodology_id}; list_methodologies allows {sorted(model_kinds)}"
+        ]
+    return []
+
+
+def compiled_pipeline_defects(
+    compiled: Any,
+    methodology: str,
+    model_kind: str,
+) -> list[str]:
+    if not isinstance(compiled, dict):
+        return ["compile_intent did not return a pipeline object"]
+    reported_methodology = compiled.get("methodology")
+    if reported_methodology and str(reported_methodology) != methodology:
+        return [
+            f"compile_intent returned methodology `{reported_methodology}` instead of "
+            f"`{methodology}`"
+        ]
+    if compiled.get("runnable") is False:
+        return [f"compile_intent returned a pipeline that cannot run under {methodology}"]
+    reported_kind = compiled.get("model_kind")
+    if reported_kind and str(reported_kind) != model_kind:
+        return [
+            f"compile_intent returned model_kind `{reported_kind}` instead of `{model_kind}`"
+        ]
+    return []
+
+
+def run_defects(run: Any) -> list[str]:
+    if not isinstance(run, dict):
+        return ["run did not return a trainer result object"]
+    if run.get("engine") == "structural":
+        return ["run was structural and trained no methodology"]
+    status = str(run.get("status") or "").lower()
+    if status in {"failed", "cancelled", "canceled"}:
+        return [f"the methodology run ended with status `{status}`"]
+    return []
 
 
 def _parse(text: str | None) -> dict[str, Any] | None:
@@ -82,15 +165,26 @@ def defects(example: dict[str, Any]) -> list[str]:
     if kind == "create" and example.get("before"):
         problems.append("a creation carries a `before` pipeline")
 
-    methodology = str(pipeline.get("model_kind", ""))
-    if methodology:
-        missing = REQUIRED.get(methodology, set()) - {k for k, v in pipeline.items() if v}
-        if missing:
-            problems.append(f"`{methodology}` is missing {sorted(missing)} — that is the "
-                            f"neighbouring methodology's shape, not this one's")
-        present = FORBIDDEN.get(methodology, set()) & {k for k, v in pipeline.items() if v}
-        if present:
-            problems.append(f"`{methodology}` carries {sorted(present)}, which does not apply to it")
+    methodology = str(example.get("methodology") or "")
+    model_kind = str(example.get("model_kind") or "")
+    pipeline_model_kind = str(pipeline.get("model_kind") or "")
+    if not methodology:
+        problems.append("the example does not name its methodology")
+    if not model_kind:
+        problems.append("the example does not name its model_kind")
+    if pipeline_model_kind != model_kind:
+        problems.append(
+            "the pipeline model_kind does not match the example's model_kind"
+        )
+    compile_steps = [
+        step for step in trajectory if step.get("call") == "compile_intent"
+    ]
+    if len(compile_steps) != 1:
+        problems.append("the trajectory must compile exactly one pipeline with compile_intent")
+    elif str((compile_steps[0].get("args") or {}).get("methodology") or "") != methodology:
+        problems.append("compile_intent does not carry the example's methodology")
+    elif compile_steps[0] is not trajectory[-1]:
+        problems.append("compile_intent must be the final generated call before replay runs it")
 
     if not str(example.get("reply", "")).strip():
         problems.append("no reply — the user is told nothing about what was built")
@@ -104,14 +198,14 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=Path("corpus"))
     args = parser.parse_args()
 
+    if not (os.environ.get("ZETTA_BASE_URL") and os.environ.get("ZETTA_TOKEN")):
+        print(
+            "no ZETTA_BASE_URL/ZETTA_TOKEN — refusing to record examples whose "
+            "methodology cannot be checked or compiled"
+        )
+        return 2
     client = OpenAI()
-    # Without a node the observations stay written, which is the defect #989 describes. Allowed,
-    # but the corpus records which examples were actually observed so nobody has to guess later.
-    node: Node | None = None
-    if os.environ.get("ZETTA_BASE_URL") and os.environ.get("ZETTA_TOKEN"):
-        node = Node()
-    else:
-        print("no ZETTA_BASE_URL/ZETTA_TOKEN — observations will be WRITTEN, not observed (#989)")
+    node = Node()
     system = (PROMPTS / f"{PROMPT_VERSION}.md").read_text()
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / f"project-sft-{PROMPT_VERSION}.jsonl"
@@ -119,40 +213,85 @@ def main() -> int:
     seen: list[str] = []
     kept = rejected = mutations = 0
     for index in range(args.examples):
+        methodologies, legacy = discover_methodologies(node)
         # Alternate so mutations are half the corpus rather than an afterthought — changing a
         # Pipeline is the harder half of the product and the easier half to under-represent.
         want = "mutate" if index % 2 else "create"
         avoid = ("\n\nAlready generated, pick something further away:\n"
                  + "\n".join(f"- {s}" for s in seen)) if seen else ""
-        response = client.chat.completions.create(model=args.model, messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": f"Produce one `{want}` example." + avoid}])
+        response = client.chat.completions.create(
+            model=args.model,
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Produce one `{want}` example.\n\n"
+                        + methodology_context(methodologies, legacy)
+                        + avoid
+                    ),
+                },
+            ],
+        )
 
         example = _parse(response.choices[0].message.content)
         if example is None:
-            print(f"[{index+1}/{args.examples}] unparseable — skipped"); rejected += 1; continue
+            print(f"[{index+1}/{args.examples}] unparseable — skipped")
+            rejected += 1
+            continue
+
+        problems = methodology_defects(example, methodologies) + defects(example)
+        if problems:
+            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · {problems[0]}")
+            rejected += 1
+            continue
 
         # Make the observations REAL (#989). The generating model writes observations that are
         # coherent by construction — one author wrote both the observation and the call that
         # responded to it — which is exactly the property a live node does not have. Land the
         # profile, replay the read calls, and keep what the node actually returned.
-        if node is not None:
-            try:
-                land_profile(node, example.get("profile") or {}, Path("/tmp/apc-staging"))
-                example["trajectory"], replay_problems = replay(node, example["trajectory"])
-                example["observations_real"] = not replay_problems
-            except Exception as error:  # noqa: BLE001
-                replay_problems = [f"could not land or replay: {str(error)[:120]}"]
-                example["observations_real"] = False
-            if replay_problems:
-                print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
-                      f"{replay_problems[0]}")
-                rejected += 1
-                continue
+        try:
+            land_profile(node, example.get("profile") or {}, Path("/tmp/apc-staging"))
+            example["trajectory"], replay_problems = replay(
+                node,
+                example["trajectory"],
+                str(example["methodology"]),
+            )
+            example["observations_real"] = not replay_problems
+        except Exception as error:  # noqa: BLE001
+            replay_problems = [f"could not land or replay: {str(error)[:120]}"]
+            example["observations_real"] = False
+        if replay_problems:
+            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                  f"{replay_problems[0]}")
+            rejected += 1
+            continue
 
-        problems = defects(example)
-        if problems:
-            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · {problems[0]}")
+        example["compiled_pipeline"] = next(
+            step["observation"]
+            for step in example["trajectory"]
+            if step.get("call") == "compile_intent"
+        )
+        compile_problems = compiled_pipeline_defects(
+            example["compiled_pipeline"],
+            str(example["methodology"]),
+            str(example["model_kind"]),
+        )
+        if compile_problems:
+            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                  f"{compile_problems[0]}")
+            rejected += 1
+            continue
+        example["pipeline"] = example["compiled_pipeline"]
+        example["run"] = next(
+            step["observation"]
+            for step in example["trajectory"]
+            if step.get("call") == "run"
+        )
+        run_problems = run_defects(example["run"])
+        if run_problems:
+            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                  f"{run_problems[0]}")
             rejected += 1
             continue
 
@@ -165,7 +304,6 @@ def main() -> int:
         print(f"[{index+1}/{args.examples}] {example['example_id']} · {example.get('kind')} · "
               f"{len(example['trajectory'])} calls · kept")
 
-    if node is not None:
-        node.close()
+    node.close()
     print(f"kept={kept} ({mutations} mutations) rejected={rejected} -> {path}")
     return 0

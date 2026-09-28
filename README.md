@@ -73,8 +73,21 @@ own profile never declared: a 404 from the node, invisible in prose.
 Null fractions are honoured when landing, so a `because` pointing at *"11% null ids"* is pointing
 at data that really is.
 
-Examples record `observations_real`. Running without `ZETTA_BASE_URL` still works but leaves the
-observations written, and says so.
+Examples record `observations_real`. Batch generation requires `ZETTA_BASE_URL` and `ZETTA_TOKEN`;
+without a live engine, methodology support and the compiled pipeline cannot be verified, so no
+example is written.
+
+## Runnable methodologies only (#1)
+
+At the start of each generation turn, the agent reads `list_methodologies`. Prompt v2 may select
+only an entry marked `runnable`, and each example names that entry's `methodology` id and one of its
+`model_kind` values. Replay executes `compile_intent` with the methodology and records the engine's
+compiled graph as an observation, then runs that graph and records the trainer response. An
+unrunnable methodology is rejected with its tracking issue.
+
+If `list_methodologies` returns `unknown_capability`, the workspace predates the registry. The agent
+allows only legacy M-1 GBDT classification and says that it used this fallback. The runnable list is
+otherwise never kept in this repository.
 
 ## Status
 
@@ -83,11 +96,12 @@ Generating. Nothing trained on it yet.
 ## In lake (lake#263)
 
 A library agent of lake: a person asks it to record how a pipeline is built (or changed, a
-`mutate` example) **on their own data**. One turn reads the workspace through lake's read-only path
-(`list_datasets`), asks for one example whose profile is that workspace (only its real tables and
-columns), replays the example's read calls against it so every observation is what the workspace
-returned (#989), and checks `defects`. `land_profile` is not used: nothing is landed or written in
-the person's workspace, and the example is answered as `{reply, result: {kind: project_example,
+`mutate` example) **on their own data**. One turn uses the workspace capability path
+(`list_methodologies`, then `list_datasets`), asks for one example whose profile is that workspace
+(only its real tables and columns), and replays the example's workspace reads, compile, and run so
+every observation is what the workspace returned (#989). `land_profile` is not used: no dataset is
+landed in the person's workspace, and the example is answered as
+`{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).

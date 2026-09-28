@@ -36,11 +36,13 @@ user's work.
 
 ## The methodology check
 
-`REQUIRED` and `FORBIDDEN` mirror the correctness cores in zetta's `plan_templates.cpp`, so an SFT
-example grades the same way the engine does. The forbidden entries are the ones that get guessed
-wrong: a **forecast is never calibrated** (no probability to calibrate, and a calibrator fit on
-content-held-out rows re-introduces the leak temporal validation prevents); **anomaly and retrieval
-have no label** to leak or calibrate.
+Read `list_methodologies` at the start of each generation turn. Record only an entry marked
+`runnable`, require its `model_kinds` to contain the example's `model_kind`, and replay
+`compile_intent` with the selected methodology followed by `run`. The compiled graph and trainer
+response are the proof; do not maintain a runnable-methodology list here.
+
+Only `unknown_capability` activates the pre-registry fallback, where M-1 GBDT classification is the
+only runnable methodology. Name this fallback in the answer.
 
 ## Running
 

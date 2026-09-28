@@ -1,11 +1,11 @@
 """The Project Corpus Generator as a lake library agent (lake#263): a worked example on your data.
 
 A person asks it to record how a pipeline is built (or changed) on their own data. One turn reads
-the person's workspace through lake's read-only path, asks for one `create` (or `mutate`) example
+the person's workspace through lake, asks for one `create` (or `mutate`) example
 whose profile IS that workspace — only its real tables and columns — then replays the example's
 read calls against the workspace so every observation is what the workspace returned (#989), and
-checks it as the batch CLI does. Nothing is landed or written: the CLI's `land_profile` stays the
-CLI's, and the example is answered, never added to the corpus.
+checks it as the batch CLI does. No dataset is landed; `compile_intent` stores the verified graph,
+and the example is answered but never added to the corpus.
 
 Turns arrive on lake's agent bus (lake_bus.py); `POST /v1/turn` answers the same for a direct call.
 """
@@ -20,7 +20,17 @@ from typing import Any
 from openai import OpenAI
 
 from agent_project_corpus import lake_bus
-from agent_project_corpus.agent import PROMPT_VERSION, PROMPTS, _parse, defects
+from agent_project_corpus.agent import (
+    PROMPT_VERSION,
+    PROMPTS,
+    _parse,
+    compiled_pipeline_defects,
+    defects,
+    discover_methodologies,
+    methodology_context,
+    methodology_defects,
+    run_defects,
+)
 from agent_project_corpus.node import Node, replay
 
 CHANGE_WORDS = ("change", "mutat", "modify", "edit", "update", "existing")
@@ -47,6 +57,7 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                                           "zetta_token"}
         node = Node(base_url=base, token=token)
     try:
+        methodologies, legacy = discover_methodologies(node)
         tables = workspace_tables(node)
         if not tables:
             return {"ok": False, "error": "your workspace has no datasets yet: load data first, "
@@ -59,13 +70,38 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                 f"Produce one `{want}` example. Its profile is THIS workspace, not an invented one: "
                 "use only these tables and columns, by these names, in every call:\n"
                 + json.dumps(tables[:12]) + (f"\n\nThe person asking wants: {request}" if request
-                                             else "")}])
+                                             else "")
+                + "\n\n" + methodology_context(methodologies, legacy)}])
         example = _parse(response.choices[0].message.content)
         if example is None:
             return {"ok": False, "error": "no example came back from the model"}
-        example["trajectory"], problems = replay(node, example.get("trajectory") or [])
+        problems = methodology_defects(example, methodologies) + defects(example)
+        if problems:
+            return {"ok": False, "error": "the example was rejected: " + "; ".join(problems[:3])}
+        example["trajectory"], problems = replay(
+            node,
+            example.get("trajectory") or [],
+            str(example["methodology"]),
+        )
         example["observations_real"] = not problems
-        problems += defects(example)
+        if not problems:
+            example["compiled_pipeline"] = next(
+                step["observation"]
+                for step in example["trajectory"]
+                if step.get("call") == "compile_intent"
+            )
+            problems = compiled_pipeline_defects(
+                example["compiled_pipeline"],
+                str(example["methodology"]),
+                str(example["model_kind"]),
+            )
+            example["pipeline"] = example["compiled_pipeline"]
+            example["run"] = next(
+                step["observation"]
+                for step in example["trajectory"]
+                if step.get("call") == "run"
+            )
+            problems += run_defects(example["run"])
     finally:
         if owned:
             node.close()
@@ -76,8 +112,11 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
     calls = example.get("trajectory") or []
     reply = (f"I recorded a worked example on your data, **{example.get('example_id')}**: a "
              f"`{example.get('kind', want)}` of {len(calls)} calls. Every observation in it is what "
-             "your workspace returned, not what the model expected. It was not added to the "
+             "your workspace returned, including the pipeline compiled for "
+             f"{example.get('methodology')}. It was not added to the "
              "Project Agent's corpus.")
+    if legacy:
+        reply += " This workspace predates the methodology registry, so only M-1 was allowed."
     return {"ok": True, "reply": reply,
             "result": {"kind": "project_example", "example": example}}
 
