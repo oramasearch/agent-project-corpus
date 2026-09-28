@@ -11,6 +11,9 @@ from types import SimpleNamespace
 from agent_project_corpus import service
 
 EXAMPLE = json.loads(Path("tests/fixtures/project-example-v2.json").read_text())
+SOLUTION_EXAMPLE = json.loads(
+    Path("tests/fixtures/project-solution-v3.json").read_text()
+)
 M1 = {
     "id": "M-1",
     "name": "Tabular supervised learning",
@@ -24,6 +27,26 @@ M3 = {
     "model_kinds": ["segmentation", "clustering"],
     "runnable": False,
     "issue": "zetta#1042",
+}
+SOLUTION = {
+    "id": "S-live",
+    "name": "Retention actions",
+    "composition": [{"methodology": "M-1", "minimum_level": 1}],
+    "levels": [{"level": 1, "name": "Assist"}],
+    "autonomy": [{"action_class": "task", "autonomy": "A1"}],
+    "data_roles": [
+        {
+            "role": "outcome",
+            "required": True,
+            "description": "Observed retention outcome",
+        }
+    ],
+    "policy": "Act above an owner-approved threshold",
+    "measurement": "Compare treatment with the holdout",
+    "guardrails": ["contact cap"],
+    "runnable": True,
+    "status": "available",
+    "issue": "",
 }
 
 
@@ -42,15 +65,37 @@ class Scripted:
 class Workspace:
     """The person's workspace through lake, with every capability recorded."""
 
-    def __init__(self, datasets, methodologies=None, legacy=False):
+    def __init__(
+        self,
+        datasets,
+        methodologies=None,
+        legacy=False,
+        solution_entries=None,
+        missing_optional=None,
+    ):
         self.datasets = datasets
         self.methodologies = methodologies or [M1, M3]
         self.legacy = legacy
+        self.solution_entries = solution_entries
+        self.missing_optional = set(missing_optional or [])
         self.reads = []
         self.acts = []
 
     def read(self, capability, **params):
         self.reads.append(capability)
+        if capability == "list_solutions":
+            if self.solution_entries is None:
+                error = RuntimeError("unknown_capability: list_solutions")
+                error.code = "unknown_capability"
+                raise error
+            return {"solutions": self.solution_entries}
+        if capability == "get_solution":
+            entry = next(
+                item
+                for item in self.solution_entries
+                if item["id"] == params["solution"]
+            )
+            return {"solution": entry}
         if capability == "list_methodologies":
             if self.legacy:
                 error = RuntimeError("unknown_capability: list_methodologies")
@@ -59,10 +104,33 @@ class Workspace:
             return {"methodologies": self.methodologies}
         if capability == "list_datasets":
             return {"datasets": self.datasets}
+        if capability in self.missing_optional:
+            error = RuntimeError(f"unknown_capability: {capability}")
+            error.code = "unknown_capability"
+            raise error
+        if capability == "get_policy":
+            return {"policy": {"version": 2, "autonomy": "A1"}}
+        if capability == "get_experiment":
+            return {"experiment": {"holdout": "configured"}}
+        if capability == "list_ledger":
+            return {"entries": [{"kind": "action"}]}
+        if capability == "get_monitor":
+            return {"monitor": {"status": "within_bounds"}}
+        if capability == "get_roi_readout":
+            return {"readout": {"incrementality": "measured against holdout"}}
         return {"columns": ["account_id", "churned"], "rows": 200}
 
     def act(self, capability, **body):
         self.acts.append((capability, body))
+        if capability == "create_solution":
+            return {
+                "project": body["project"],
+                "solution": body["solution"],
+                "level": body["level"],
+                "graph": "S-live CL-1",
+            }
+        if capability == "run_solution":
+            return {"run_id": "solution-run-1", "status": "succeeded"}
         if capability == "run":
             return {
                 "run_id": "run-1",
@@ -95,7 +163,7 @@ def test_a_runnable_methodology_is_compiled_and_recorded():
     assert answer["result"]["example"]["compiled_pipeline"]["methodology"] == "M-1"
     assert answer["result"]["example"]["pipeline"]["methodology"] == "M-1"
     assert answer["result"]["example"]["run"]["metrics"]["held_out_auc"] == 0.82
-    assert workspace.reads[0] == "list_methodologies"
+    assert workspace.reads[:2] == ["list_solutions", "list_methodologies"]
     assert workspace.reads.count("list_datasets") >= 2, "listed, then replayed"
     assert [capability for capability, _ in workspace.acts] == ["compile_intent", "run"]
     assert workspace.acts[0][1]["methodology"] == "M-1"
@@ -133,7 +201,112 @@ def test_an_old_engine_allows_only_m1_and_says_it_used_the_fallback():
     assert "predates the methodology registry" in answer["reply"]
     prompt = answer["result"]["example"]
     assert prompt["methodology"] == "M-1"
-    assert workspace.reads[0] == "list_methodologies"
+    assert workspace.reads[:2] == ["list_solutions", "list_methodologies"]
+
+
+def test_a_runnable_solution_is_created_run_and_recorded_from_live_state():
+    workspace = Workspace(
+        [
+            {
+                "database": "datasets",
+                "name": "customers",
+                "columns": ["account_id", "retained"],
+                "rows": 200,
+            }
+        ],
+        solution_entries=[SOLUTION],
+    )
+    client = Scripted(json.dumps(SOLUTION_EXAMPLE))
+
+    answer = service.run_turn(
+        {"request": "build retention actions"},
+        client,
+        workspace,
+        "m",
+    )
+
+    assert answer["ok"], answer
+    example = answer["result"]["example"]
+    assert example["solution"] == "S-live"
+    assert example["pipeline"]["graph"] == "S-live CL-1"
+    assert example["run"]["status"] == "succeeded"
+    assert example["policy_proposal"]["approval_required"] is True
+    assert example["label_definitions"][0]["role"] == "outcome"
+    assert example["readout"]["status"] == "available"
+    assert example["readout"]["value"]["readout"]
+    assert example["owner_signoff"]["required"] is True
+    assert workspace.reads[0] == "list_solutions"
+    assert workspace.reads.count("list_solutions") == 2
+    assert workspace.reads.count("get_solution") == 2
+    assert [capability for capability, _ in workspace.acts] == [
+        "create_solution",
+        "run_solution",
+    ]
+
+
+def test_unknown_optional_solution_reads_are_recorded_as_not_deployed():
+    workspace = Workspace(
+        [{"database": "datasets", "name": "customers"}],
+        solution_entries=[SOLUTION],
+        missing_optional={"get_monitor", "get_roi_readout"},
+    )
+
+    answer = service.run_turn(
+        {"request": "build retention actions"},
+        Scripted(json.dumps(SOLUTION_EXAMPLE)),
+        workspace,
+        "m",
+    )
+
+    assert answer["ok"], answer
+    example = answer["result"]["example"]
+    assert example["readout"]["status"] == "not_deployed_yet"
+    assert "not deployed yet" in example["reply"]
+
+
+def test_a_solution_not_marked_runnable_is_never_created():
+    unavailable = {**SOLUTION, "runnable": False, "issue": "zetta#1110"}
+    workspace = Workspace(
+        [{"database": "datasets", "name": "customers"}],
+        solution_entries=[unavailable],
+    )
+
+    answer = service.run_turn(
+        {"request": "build retention actions"},
+        Scripted(json.dumps(SOLUTION_EXAMPLE)),
+        workspace,
+        "m",
+    )
+
+    assert not answer["ok"]
+    assert "zetta#1110" in answer["error"]
+    assert workspace.reads[:3] == ["list_solutions", "list_datasets", "get_solution"]
+    assert workspace.acts == []
+
+
+def test_a_solution_whose_run_fails_is_not_recorded():
+    class FailedRunWorkspace(Workspace):
+        def act(self, capability, **body):
+            result = super().act(capability, **body)
+            if capability == "run_solution":
+                return {"run_id": "solution-run-1", "status": "failed"}
+            return result
+
+    workspace = FailedRunWorkspace(
+        [{"database": "datasets", "name": "customers"}],
+        solution_entries=[SOLUTION],
+    )
+
+    answer = service.run_turn(
+        {"request": "build retention actions"},
+        Scripted(json.dumps(SOLUTION_EXAMPLE)),
+        workspace,
+        "m",
+    )
+
+    assert not answer["ok"]
+    assert "run_solution" in answer["error"]
+    assert "failed" in answer["error"]
 
 
 def test_a_change_request_asks_for_a_mutation():

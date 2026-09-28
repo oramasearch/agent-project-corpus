@@ -1,10 +1,11 @@
 # agent-project-corpus
 
-Training corpus for **the main agent** — the one that creates and mutates projects
+Training corpus for **the main agent** — the one that builds and operates catalogue Solutions,
+and creates or mutates projects
 ([zetta#986](https://github.com/oramasearch/zetta/issues/986)).
 
-It takes a **project profile** (what Auto-Suggest proposed) plus the user's intent, and builds the
-Pipeline. Then it changes it when asked. That is the product.
+It takes a **project profile** (what Auto-Suggest proposed) plus the user's intent, and builds a
+catalogue Solution or Pipeline. It changes a Pipeline when asked. That is the product.
 
 ## This is a TOOL-CALLING agent, so the corpus is trajectories
 
@@ -74,20 +75,43 @@ Null fractions are honoured when landing, so a `because` pointing at *"11% null 
 at data that really is.
 
 Examples record `observations_real`. Batch generation requires `ZETTA_BASE_URL` and `ZETTA_TOKEN`;
-without a live engine, methodology support and the compiled pipeline cannot be verified, so no
-example is written.
+without a live engine, solution or methodology support and the resulting run cannot be verified,
+so no example is written.
 
 ## Runnable methodologies only (#1)
 
-At the start of each generation turn, the agent reads `list_methodologies`. Prompt v2 may select
-only an entry marked `runnable`, and each example names that entry's `methodology` id and one of its
-`model_kind` values. Replay executes `compile_intent` with the methodology and records the engine's
-compiled graph as an observation, then runs that graph and records the trainer response. An
-unrunnable methodology is rejected with its tracking issue.
+When no solution entries are available, the agent reads `list_methodologies`. Prompt v3 may select
+only an entry marked `runnable`, and each methodology example names that entry's `methodology` id
+and one of its `model_kind` values. Replay executes `compile_intent` with the methodology and
+records the engine's compiled graph as an observation, then runs that graph and records the trainer
+response. An unrunnable methodology is rejected with its tracking issue.
 
 If `list_methodologies` returns `unknown_capability`, the workspace predates the registry. The agent
 allows only legacy M-1 GBDT classification and says that it used this fallback. The runnable list is
 otherwise never kept in this repository.
+
+## Runnable solutions only (#3)
+
+At the start of each generation turn, the agent reads `list_solutions`. Prompt v3 may select only
+an entry the live response marks runnable, then `get_solution` reads that entry's current levels,
+policy template, autonomy defaults, guardrails, data roles and measurement design. The solution
+list is never copied into this repository. A sketch or non-runnable entry is rejected with the
+engine's promotion condition or implementation issue.
+
+The generated trajectory ends at `create_solution`. Replay executes that action, runs the exact
+project and graph it returned with `run_solution`, and reads policy, experiment, ledger, monitor
+and ROI readout state. Only a solution whose creation and run succeed is kept. An optional read
+that returns `unknown_capability` is recorded as “not deployed yet.”
+
+The kept example proposes policy and label definitions from the observed solution entry and marks
+both for owner sign-off. A readout is measured evidence, never a promised ROI figure, price, or
+odds of success. See [`docs/solutions/README.md`](docs/solutions/README.md).
+
+An engine that returns `unknown_capability` for `list_solutions` has no catalogue solutions for
+that turn. Methodology generation can still use its existing registry or legacy M-1 fallback.
+
+Prompt versions are recorded per example. The artifact remains `project-sft-v1.jsonl`, matching
+the filename copied by the consuming Project Agent image.
 
 ## Status
 
@@ -95,12 +119,13 @@ Generating. Nothing trained on it yet.
 
 ## In lake (lake#263)
 
-A library agent of lake: a person asks it to record how a pipeline is built (or changed, a
-`mutate` example) **on their own data**. One turn uses the workspace capability path
-(`list_methodologies`, then `list_datasets`), asks for one example whose profile is that workspace
-(only its real tables and columns), and replays the example's workspace reads, compile, and run so
-every observation is what the workspace returned (#989). `land_profile` is not used: no dataset is
-landed in the person's workspace, and the example is answered as
+A library agent of lake: a person asks it to record how a solution or pipeline is built (or how a
+pipeline is changed, a `mutate` example) **on their own data**. One turn starts with
+`list_solutions`; a solution turn also reads `get_solution`, while a workspace without entries uses
+`list_methodologies`. It then reads `list_datasets` and asks for an example whose profile is that
+workspace (only its real tables and columns), and replays the example's workspace reads and actions
+so every observation is what the workspace returned (#989). `land_profile` is not used: no dataset
+is landed in the person's workspace, and the example is answered as
 `{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 

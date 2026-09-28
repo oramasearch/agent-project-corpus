@@ -1,0 +1,55 @@
+{
+  "example_id": "workspace-retention-solution",
+  "kind": "solution",
+  "solution": "S-live",
+  "profile": {
+    "industry": "software",
+    "persona": {"role": "retention analyst", "constraints": []},
+    "connections": [{"name": "datasets.customers", "state": "captured"}],
+    "tables": [
+      {
+        "database": "datasets",
+        "name": "customers",
+        "rows": 200,
+        "columns": [
+          {"name": "account_id", "type": "string", "null_fraction": 0.0},
+          {"name": "retained", "type": "boolean", "null_fraction": 0.0}
+        ]
+      }
+    ]
+  },
+  "intent": "build retention actions",
+  "before": null,
+  "trajectory": [
+    {"call": "list_solutions", "args": {}, "observation": "written"},
+    {
+      "call": "get_solution",
+      "args": {"solution": "S-live"},
+      "observation": "written",
+      "because": "list_solutions returned S-live as runnable"
+    },
+    {
+      "call": "list_datasets",
+      "args": {},
+      "observation": "written",
+      "because": "get_solution required customer and outcome data roles"
+    },
+    {
+      "call": "get_dataset",
+      "args": {"dataset": "datasets.customers"},
+      "observation": "written",
+      "because": "list_datasets returned datasets.customers"
+    },
+    {
+      "call": "create_solution",
+      "args": {
+        "project": "retention",
+        "solution": "S-live",
+        "level": 1,
+        "sources": {"source": "datasets", "table": "customers"}
+      },
+      "because": "get_solution allowed level 1 and get_dataset returned the required roles"
+    }
+  ],
+  "reply": "The solution run and measured readout are recorded as evidence."
+}

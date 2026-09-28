@@ -1,8 +1,9 @@
-"""Generate the project creation/mutation corpus.
+"""Generate solution-operation and project creation/mutation examples.
 
 This trains the MAIN agent — the one that builds Pipelines and changes them. It is a tool-calling
 agent, so an example is a trajectory whose every call after the first is conditioned on what the
-previous call returned.
+previous call returned. Solution examples build and run a live registry entry; methodology
+examples compile and run a Pipeline.
 
 SFT here, RLVR after. The order is measured rather than preferred: a campaign against a policy
 that never emits a pipeline returns a uniformly zero reward, and a group with equal rewards has
@@ -21,9 +22,11 @@ from typing import Any
 
 from openai import OpenAI
 
+from agent_project_corpus import solutions
 from agent_project_corpus.node import Node, NodeError, land_profile, replay
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
+CORPUS_VERSION = "v1"
 PROMPTS = Path(__file__).parent / "prompts"
 
 LEGACY_M1 = {
@@ -160,6 +163,12 @@ def defects(example: dict[str, Any]) -> list[str]:
                             f"observation from a previous call")
 
     kind = str(example.get("kind", "create"))
+    if kind == "solution":
+        if example.get("before"):
+            problems.append("a solution build carries a `before` pipeline")
+        if not str(example.get("reply", "")).strip():
+            problems.append("no reply — the user is told nothing about the solution")
+        return problems
     if kind == "mutate" and not example.get("before"):
         problems.append("a mutation with no `before` cannot teach what must NOT change")
     if kind == "create" and example.get("before"):
@@ -201,24 +210,35 @@ def main() -> int:
     if not (os.environ.get("ZETTA_BASE_URL") and os.environ.get("ZETTA_TOKEN")):
         print(
             "no ZETTA_BASE_URL/ZETTA_TOKEN — refusing to record examples whose "
-            "methodology cannot be checked or compiled"
+            "solution or methodology cannot be checked and run"
         )
         return 2
     client = OpenAI()
     node = Node()
     system = (PROMPTS / f"{PROMPT_VERSION}.md").read_text()
     args.out.mkdir(parents=True, exist_ok=True)
-    path = args.out / f"project-sft-{PROMPT_VERSION}.jsonl"
+    path = args.out / f"project-sft-{CORPUS_VERSION}.jsonl"
 
     seen: list[str] = []
     kept = rejected = mutations = 0
     for index in range(args.examples):
-        methodologies, legacy = discover_methodologies(node)
+        solution_entries, solution_registry_unavailable = solutions.discover(node)
+        solution_turn = bool(solution_entries)
+        methodologies: list[dict[str, Any]] = []
+        legacy = False
+        if not solution_turn:
+            methodologies, legacy = discover_methodologies(node)
         # Alternate so mutations are half the corpus rather than an afterthought — changing a
         # Pipeline is the harder half of the product and the easier half to under-represent.
-        want = "mutate" if index % 2 else "create"
+        want = "solution" if solution_turn else ("mutate" if index % 2 else "create")
         avoid = ("\n\nAlready generated, pick something further away:\n"
                  + "\n".join(f"- {s}" for s in seen)) if seen else ""
+        registry_context = solutions.context(
+            solution_entries,
+            solution_registry_unavailable,
+        )
+        if not solution_turn:
+            registry_context += "\n" + methodology_context(methodologies, legacy)
         response = client.chat.completions.create(
             model=args.model,
             messages=[
@@ -227,7 +247,7 @@ def main() -> int:
                     "role": "user",
                     "content": (
                         f"Produce one `{want}` example.\n\n"
-                        + methodology_context(methodologies, legacy)
+                        + registry_context
                         + avoid
                     ),
                 },
@@ -240,7 +260,24 @@ def main() -> int:
             rejected += 1
             continue
 
-        problems = methodology_defects(example, methodologies) + defects(example)
+        if solution_turn:
+            definition = None
+            definition_problems = []
+            identifier = str(example.get("solution") or "")
+            if solutions.listed_entry(solution_entries, identifier):
+                try:
+                    definition = solutions.read_definition(node, identifier)
+                except Exception as error:  # noqa: BLE001 - the failed read rejects the example
+                    definition_problems.append(
+                        f"get_solution failed for `{identifier}`: {str(error)[:120]}"
+                    )
+            problems = (
+                definition_problems
+                + solutions.generated_defects(example, solution_entries, definition)
+                + defects(example)
+            )
+        else:
+            problems = methodology_defects(example, methodologies) + defects(example)
         if problems:
             print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · {problems[0]}")
             rejected += 1
@@ -252,11 +289,18 @@ def main() -> int:
         # profile, replay the read calls, and keep what the node actually returned.
         try:
             land_profile(node, example.get("profile") or {}, Path("/tmp/apc-staging"))
-            example["trajectory"], replay_problems = replay(
-                node,
-                example["trajectory"],
-                str(example["methodology"]),
-            )
+            if solution_turn:
+                example["trajectory"], replay_problems = replay(
+                    node,
+                    example["trajectory"],
+                    solution=str(example["solution"]),
+                )
+            else:
+                example["trajectory"], replay_problems = replay(
+                    node,
+                    example["trajectory"],
+                    str(example["methodology"]),
+                )
             example["observations_real"] = not replay_problems
         except Exception as error:  # noqa: BLE001
             replay_problems = [f"could not land or replay: {str(error)[:120]}"]
@@ -267,33 +311,42 @@ def main() -> int:
             rejected += 1
             continue
 
-        example["compiled_pipeline"] = next(
-            step["observation"]
-            for step in example["trajectory"]
-            if step.get("call") == "compile_intent"
-        )
-        compile_problems = compiled_pipeline_defects(
-            example["compiled_pipeline"],
-            str(example["methodology"]),
-            str(example["model_kind"]),
-        )
-        if compile_problems:
-            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
-                  f"{compile_problems[0]}")
-            rejected += 1
-            continue
-        example["pipeline"] = example["compiled_pipeline"]
-        example["run"] = next(
-            step["observation"]
-            for step in example["trajectory"]
-            if step.get("call") == "run"
-        )
-        run_problems = run_defects(example["run"])
-        if run_problems:
-            print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
-                  f"{run_problems[0]}")
-            rejected += 1
-            continue
+        if solution_turn:
+            solutions.record_operating_result(example)
+            operating_problems = solutions.recorded_defects(example)
+            if operating_problems:
+                print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                      f"{operating_problems[0]}")
+                rejected += 1
+                continue
+        else:
+            example["compiled_pipeline"] = next(
+                step["observation"]
+                for step in example["trajectory"]
+                if step.get("call") == "compile_intent"
+            )
+            compile_problems = compiled_pipeline_defects(
+                example["compiled_pipeline"],
+                str(example["methodology"]),
+                str(example["model_kind"]),
+            )
+            if compile_problems:
+                print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                      f"{compile_problems[0]}")
+                rejected += 1
+                continue
+            example["pipeline"] = example["compiled_pipeline"]
+            example["run"] = next(
+                step["observation"]
+                for step in example["trajectory"]
+                if step.get("call") == "run"
+            )
+            run_problems = run_defects(example["run"])
+            if run_problems:
+                print(f"[{index+1}/{args.examples}] {example['example_id']} REJECTED · "
+                      f"{run_problems[0]}")
+                rejected += 1
+                continue
 
         example["prompt_version"] = PROMPT_VERSION
         with path.open("a") as handle:
