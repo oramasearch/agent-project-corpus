@@ -1,11 +1,10 @@
-"""The Project Corpus Generator as a lake library agent (lake#263): a worked example on your data.
+"""The Project Corpus Generator as a lake library agent (lake#263): live worked examples.
 
-A person asks it to record how a pipeline is built (or changed) on their own data. One turn reads
-the person's workspace through lake, asks for one `create` (or `mutate`) example
-whose profile IS that workspace — only its real tables and columns — then replays the example's
-read calls against the workspace so every observation is what the workspace returned (#989), and
-checks it as the batch CLI does. No dataset is landed; `compile_intent` stores the verified graph,
-and the example is answered but never added to the corpus.
+A person asks it to record how a solution or pipeline is built (or how a pipeline is changed) on
+their own data. One turn reads the person's workspace through lake, asks for one example whose
+profile IS that workspace — only its real tables and columns — then replays the reads and actions
+so every observation is what the workspace returned (#989), and checks it as the batch CLI does.
+No dataset is landed, and the example is answered but never added to the corpus.
 
 Turns arrive on lake's agent bus (lake_bus.py); `POST /v1/turn` answers the same for a direct call.
 """
@@ -19,7 +18,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from agent_project_corpus import lake_bus
+from agent_project_corpus import lake_bus, solutions
 from agent_project_corpus.agent import (
     PROMPT_VERSION,
     PROMPTS,
@@ -57,13 +56,26 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                                           "zetta_token"}
         node = Node(base_url=base, token=token)
     try:
-        methodologies, legacy = discover_methodologies(node)
+        solution_entries, solution_registry_unavailable = solutions.discover(node)
+        solution_turn = bool(solution_entries)
+        methodologies: list[dict[str, Any]] = []
+        legacy = False
+        if not solution_turn:
+            methodologies, legacy = discover_methodologies(node)
         tables = workspace_tables(node)
         if not tables:
             return {"ok": False, "error": "your workspace has no datasets yet: load data first, "
                                           "and the example is built on it"}
-        want = "mutate" if any(word in request.lower() for word in CHANGE_WORDS) else "create"
+        want = "solution" if solution_turn else (
+            "mutate" if any(word in request.lower() for word in CHANGE_WORDS) else "create"
+        )
         model = model or os.environ.get("PROJECT_CORPUS_MODEL", os.environ.get("AGENT_MODEL", "gpt-4o"))
+        registry_context = solutions.context(
+            solution_entries,
+            solution_registry_unavailable,
+        )
+        if not solution_turn:
+            registry_context += "\n" + methodology_context(methodologies, legacy)
         response = (client or OpenAI()).chat.completions.create(model=model, messages=[
             {"role": "system", "content": (PROMPTS / f"{PROMPT_VERSION}.md").read_text()},
             {"role": "user", "content":
@@ -71,37 +83,65 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                 "use only these tables and columns, by these names, in every call:\n"
                 + json.dumps(tables[:12]) + (f"\n\nThe person asking wants: {request}" if request
                                              else "")
-                + "\n\n" + methodology_context(methodologies, legacy)}])
+                + "\n\n" + registry_context}])
         example = _parse(response.choices[0].message.content)
         if example is None:
             return {"ok": False, "error": "no example came back from the model"}
-        problems = methodology_defects(example, methodologies) + defects(example)
+        if solution_turn:
+            definition = None
+            definition_problems = []
+            identifier = str(example.get("solution") or "")
+            if solutions.listed_entry(solution_entries, identifier):
+                try:
+                    definition = solutions.read_definition(node, identifier)
+                except Exception as error:  # noqa: BLE001 - the failed read rejects the example
+                    definition_problems.append(
+                        f"get_solution failed for `{identifier}`: {str(error)[:120]}"
+                    )
+            problems = (
+                definition_problems
+                + solutions.generated_defects(example, solution_entries, definition)
+                + defects(example)
+            )
+        else:
+            problems = methodology_defects(example, methodologies) + defects(example)
         if problems:
             return {"ok": False, "error": "the example was rejected: " + "; ".join(problems[:3])}
-        example["trajectory"], problems = replay(
-            node,
-            example.get("trajectory") or [],
-            str(example["methodology"]),
-        )
+        if solution_turn:
+            example["trajectory"], problems = replay(
+                node,
+                example.get("trajectory") or [],
+                solution=str(example["solution"]),
+            )
+        else:
+            example["trajectory"], problems = replay(
+                node,
+                example.get("trajectory") or [],
+                str(example["methodology"]),
+            )
         example["observations_real"] = not problems
         if not problems:
-            example["compiled_pipeline"] = next(
-                step["observation"]
-                for step in example["trajectory"]
-                if step.get("call") == "compile_intent"
-            )
-            problems = compiled_pipeline_defects(
-                example["compiled_pipeline"],
-                str(example["methodology"]),
-                str(example["model_kind"]),
-            )
-            example["pipeline"] = example["compiled_pipeline"]
-            example["run"] = next(
-                step["observation"]
-                for step in example["trajectory"]
-                if step.get("call") == "run"
-            )
-            problems += run_defects(example["run"])
+            if solution_turn:
+                solutions.record_operating_result(example)
+                problems = solutions.recorded_defects(example)
+            else:
+                example["compiled_pipeline"] = next(
+                    step["observation"]
+                    for step in example["trajectory"]
+                    if step.get("call") == "compile_intent"
+                )
+                problems = compiled_pipeline_defects(
+                    example["compiled_pipeline"],
+                    str(example["methodology"]),
+                    str(example["model_kind"]),
+                )
+                example["pipeline"] = example["compiled_pipeline"]
+                example["run"] = next(
+                    step["observation"]
+                    for step in example["trajectory"]
+                    if step.get("call") == "run"
+                )
+                problems += run_defects(example["run"])
     finally:
         if owned:
             node.close()
@@ -110,13 +150,23 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                                       + "; ".join(problems[:3])}
     example["prompt_version"] = PROMPT_VERSION
     calls = example.get("trajectory") or []
-    reply = (f"I recorded a worked example on your data, **{example.get('example_id')}**: a "
-             f"`{example.get('kind', want)}` of {len(calls)} calls. Every observation in it is what "
-             "your workspace returned, including the pipeline compiled for "
-             f"{example.get('methodology')}. It was not added to the "
-             "Project Agent's corpus.")
+    if solution_turn:
+        reply = (
+            f"I recorded a worked example on your data, **{example.get('example_id')}**: "
+            f"solution `{example.get('solution')}` built and ran in {len(calls)} calls. Every "
+            "observation is what your workspace returned, including its policy, label "
+            "definitions, and measured readout. It was not added to the Project Agent's corpus."
+        )
+    else:
+        reply = (f"I recorded a worked example on your data, **{example.get('example_id')}**: a "
+                 f"`{example.get('kind', want)}` of {len(calls)} calls. Every observation in it is "
+                 "what your workspace returned, including the pipeline compiled for "
+                 f"{example.get('methodology')}. It was not added to the "
+                 "Project Agent's corpus.")
     if legacy:
         reply += " This workspace predates the methodology registry, so only M-1 was allowed."
+    if solution_registry_unavailable:
+        reply += " Its engine has no solution registry, so this turn had no catalogue solutions."
     return {"ok": True, "reply": reply,
             "result": {"kind": "project_example", "example": example}}
 

@@ -1,8 +1,9 @@
 # Runnable methodology examples
 
-Worked examples are accepted only when the current workspace engine says their methodology runs.
-The generator reads `list_methodologies` at the start of every generation turn and gives that exact
-result to prompt v2. The list is not copied into this repository.
+Worked methodology examples are accepted only when the current workspace engine says their
+methodology runs. A generation turn first checks `list_solutions`; when no solution entries are
+available, it reads `list_methodologies` and gives that exact result to prompt v3. Neither list is
+copied into this repository.
 
 Each example records top-level `methodology` and `model_kind` fields. The selected registry entry
 must be runnable, and its `model_kinds` must contain the example's model kind. An unsupported entry

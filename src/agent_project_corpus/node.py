@@ -118,9 +118,16 @@ def land_profile(node: Node, profile: dict[str, Any], staging: Path,
     return landed
 
 
-# Reads ground the design in the workspace. compile_intent is the one replayed action: the engine,
-# rather than the generating model, must decide the selected methodology's pipeline shape.
+# Reads ground the design in the workspace. Replayed actions make the engine, rather than the
+# generating model, decide a methodology's pipeline shape or a solution's composed graph.
 REPLAYABLE_READS = {
+    "list_solutions",
+    "get_solution",
+    "get_policy",
+    "get_experiment",
+    "list_ledger",
+    "get_monitor",
+    "get_roi_readout",
     "list_datasets",
     "get_dataset",
     "list_models",
@@ -131,7 +138,14 @@ REPLAYABLE_READS = {
     "list_connections",
     "list_indexes",
 }
-REPLAYABLE_ACTIONS = {"compile_intent"}
+REPLAYABLE_ACTIONS = {"compile_intent", "create_solution", "run_solution"}
+OPTIONAL_SOLUTION_READS = {
+    "get_policy",
+    "get_experiment",
+    "list_ledger",
+    "get_monitor",
+    "get_roi_readout",
+}
 
 
 def _run_compiled_pipeline(
@@ -183,10 +197,63 @@ def _run_compiled_pipeline(
         return run_step, f"`run` failed against the node: {str(error)[:120]}"
 
 
+def _solution_run_step(
+    create_step: dict[str, Any],
+    created: Any,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build the run call from the graph returned by create_solution."""
+    create_args = create_step.get("args") or {}
+    project = ""
+    graph = ""
+    if isinstance(created, dict):
+        project = str(created.get("project") or "")
+        graph = str(created.get("graph") or created.get("graph_id") or "")
+    project = project or str(create_args.get("project") or "")
+    if not project or not graph:
+        return None, "create_solution did not return a project and graph for run_solution"
+    return {
+        "call": "run_solution",
+        "args": {"project": project, "graph": graph},
+        "because": "create_solution returned the composed graph this call executes",
+    }, None
+
+
+def _solution_evidence_steps(project: str) -> list[dict[str, Any]]:
+    """Read the operating evidence after a solution run succeeds."""
+    return [
+        {
+            "call": "get_policy",
+            "args": {"project": project},
+            "because": "run_solution returned the completed solution run",
+        },
+        {
+            "call": "get_experiment",
+            "args": {"project": project},
+            "because": "run_solution returned the completed solution run",
+        },
+        {
+            "call": "list_ledger",
+            "args": {"project": project},
+            "because": "run_solution returned the completed solution run",
+        },
+        {
+            "call": "get_monitor",
+            "args": {"project": project},
+            "because": "run_solution returned the completed solution run",
+        },
+        {
+            "call": "get_roi_readout",
+            "args": {"project": project},
+            "because": "run_solution returned the completed solution run",
+        },
+    ]
+
+
 def replay(
     node: Node,
     trajectory: list[dict[str, Any]],
     methodology: str | None = None,
+    solution: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Replace written observations with what the node actually returned.
 
@@ -207,6 +274,21 @@ def replay(
                 observed = node.act(call, **arguments)
             else:
                 observed = node.read(call, **arguments)
+            if call in OPTIONAL_SOLUTION_READS and isinstance(observed, dict):
+                error = observed.get("error")
+                code = error.get("code") if isinstance(error, dict) else observed.get("code")
+                if code == "unknown_capability":
+                    observed = {
+                        "status": "not_deployed_yet",
+                        "capability": call,
+                        "code": "unknown_capability",
+                    }
+            if isinstance(observed, dict) and isinstance(observed.get("error"), dict):
+                returned_error = observed["error"]
+                raise NodeError(
+                    str(returned_error.get("code") or "engine_error"),
+                    str(returned_error.get("message") or "the capability failed"),
+                )
             step["observation"] = observed
             step["observed"] = True
             if call == "compile_intent":
@@ -219,7 +301,34 @@ def replay(
                 trajectory.append(run_step)
                 if run_problem:
                     problems.append(run_problem)
+            if call == "create_solution":
+                run_step, run_problem = _solution_run_step(step, observed)
+                if run_step:
+                    trajectory.append(run_step)
+                if run_problem:
+                    problems.append(run_problem)
+            if call == "run_solution":
+                status = ""
+                if isinstance(observed, dict):
+                    status = str(observed.get("status") or "").lower()
+                if status in {"failed", "cancelled", "canceled"}:
+                    problems.append(f"`run_solution` ended with status `{status}`")
+                else:
+                    project = str(arguments.get("project") or "")
+                    trajectory.extend(_solution_evidence_steps(project))
         except Exception as error:  # noqa: BLE001 — the failure IS the observation
+            optional_missing = (
+                call in OPTIONAL_SOLUTION_READS
+                and getattr(error, "code", "") == "unknown_capability"
+            )
+            if optional_missing:
+                step["observation"] = {
+                    "status": "not_deployed_yet",
+                    "capability": call,
+                    "code": "unknown_capability",
+                }
+                step["observed"] = True
+                continue
             step["observation"] = {"error": str(error)[:200]}
             step["observed"] = False
             problems.append(f"`{call}` failed against the node: {str(error)[:120]}")
@@ -238,4 +347,29 @@ def replay(
         for step in trajectory
     ):
         problems.append("the compiled methodology did not produce an observed run")
+    if solution and not any(
+        step.get("call") == "list_solutions" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append("the solution registry was not observed with `list_solutions`")
+    if solution and not any(
+        step.get("call") == "get_solution" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append(f"the selected solution `{solution}` was not observed with `get_solution`")
+    if solution and not any(
+        step.get("call") == "create_solution" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append(f"the solution `{solution}` was not built with `create_solution`")
+    if solution and not any(
+        step.get("call") == "run_solution" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append(f"the solution `{solution}` did not produce an observed run")
+    if solution and not any(
+        step.get("call") == "get_roi_readout" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append(f"the solution `{solution}` did not read its ROI readout")
     return trajectory, problems

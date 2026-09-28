@@ -1,6 +1,7 @@
 # agent-project-corpus — Claude rules
 
-Training corpus for **the main agent**: the one that creates and mutates Pipelines
+Training corpus for **the main agent**: the one that builds and operates catalogue Solutions, and
+creates or mutates Pipelines
 ([zetta#986](https://github.com/oramasearch/zetta/issues/986)). Read
 [`zetta-bridge/docs/agent-scaffold.md`](../../docs/agent-scaffold.md) first.
 
@@ -24,19 +25,27 @@ equal rewards has **zero advantage** — GRPO takes a null step and the run cann
 it goes. That was measured
 ([zetta#859](https://github.com/oramasearch/zetta/issues/859)), not assumed.
 
-So this corpus has one job: **get the policy to sometimes build a correct pipeline.** The loop does
-the rest — and it works: reward 0.52 → 1.00 over 16 steps against the deterministic graders.
+So this corpus has one job: **get the policy to sometimes build a correct solution or pipeline.**
+The loop does the rest — and it works: reward 0.52 → 1.00 over 16 steps against the deterministic
+graders.
 
 ## Mutations are half the corpus, deliberately
 
-Generation alternates `create` and `mutate`, because changing a Pipeline is the harder half of the
-product and the easier half to under-represent. A mutation carries `before`, and **what must not
-change is as much of the lesson as what must** — a mutation that silently rebuilds has lost the
-user's work.
+Methodology generation alternates `create` and `mutate`, because changing a Pipeline is the harder
+half of that product path and the easier half to under-represent. A mutation carries `before`, and
+**what must not change is as much of the lesson as what must** — a mutation that silently rebuilds
+has lost the user's work. Solution generation records a build only after its live run succeeds.
 
-## The methodology check
+## The solution and methodology checks
 
-Read `list_methodologies` at the start of each generation turn. Record only an entry marked
+Read `list_solutions` at the start of each generation turn. When it returns entries, select only a
+live entry marked runnable, read it again with `get_solution`, replay `create_solution`, run the
+returned graph, and read the operating evidence. Derive policy and label proposals from the live
+definition and require owner sign-off. Treat optional `unknown_capability` responses as “not
+deployed yet.” An engine where `list_solutions` itself is unknown has no catalogue solutions; never
+substitute a remembered list.
+
+When no solutions are available, read `list_methodologies`. Record only an entry marked
 `runnable`, require its `model_kinds` to contain the example's `model_kind`, and replay
 `compile_intent` with the selected methodology followed by `run`. The compiled graph and trainer
 response are the proof; do not maintain a runnable-methodology list here.
