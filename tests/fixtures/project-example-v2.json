@@ -1,0 +1,44 @@
+{
+  "example_id": "workspace-churn",
+  "kind": "create",
+  "methodology": "M-1",
+  "model_kind": "gbdt",
+  "profile": {
+    "industry": "software",
+    "persona": {"role": "analyst", "constraints": []},
+    "connections": [{"name": "datasets.ux_review_churn", "state": "captured"}],
+    "tables": [
+      {
+        "database": "datasets",
+        "name": "ux_review_churn",
+        "rows": 200,
+        "columns": [
+          {"name": "account_id", "type": "string", "null_fraction": 0.0},
+          {"name": "churned", "type": "boolean", "null_fraction": 0.0}
+        ]
+      }
+    ]
+  },
+  "intent": "predict account churn",
+  "before": null,
+  "trajectory": [
+    {"call": "list_datasets", "args": {}, "observation": "written"},
+    {
+      "call": "get_dataset",
+      "args": {"dataset": "datasets.ux_review_churn"},
+      "observation": "written",
+      "because": "list_datasets named datasets.ux_review_churn"
+    },
+    {
+      "call": "compile_intent",
+      "args": {
+        "project": "workspace-churn",
+        "intent": "predict account churn",
+        "methodology": "M-1"
+      },
+      "because": "get_dataset found the entity and label inputs required by M-1"
+    }
+  ],
+  "reply": "The M-1 pipeline is ready.",
+  "pipeline": {"model_kind": "gbdt"}
+}

@@ -20,6 +20,14 @@ from typing import Any
 import httpx
 
 
+class NodeError(RuntimeError):
+    """A capability failure with the engine's stable error code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class Node:
     """Read/act against a live Zetta node. Raises rather than returning a plausible empty result."""
 
@@ -41,13 +49,25 @@ class Node:
                 database, table = name.split(".", 1)
                 params = {**params, "database": database, "dataset": table}
         response = self.client.get(f"/v1/{capability}", params=params)
-        response.raise_for_status()
-        return response.json().get("value", response.json())
+        return self._value(response)
 
     def act(self, capability: str, **body: Any) -> Any:
         response = self.client.post(f"/v1/{capability}", json=body)
+        return self._value(response)
+
+    @staticmethod
+    def _value(response: httpx.Response) -> Any:
+        payload = response.json()
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            error = payload.get("error") or {}
+            raise NodeError(
+                str(error.get("code") or "engine_error"),
+                str(error.get("message") or "the engine refused the capability"),
+            )
         response.raise_for_status()
-        return response.json().get("value", response.json())
+        if isinstance(payload, dict):
+            return payload.get("value", payload)
+        return payload
 
     def close(self) -> None:
         self.client.close()
@@ -98,14 +118,27 @@ def land_profile(node: Node, profile: dict[str, Any], staging: Path,
     return landed
 
 
-# Only READ capabilities are replayed. A corpus generator must not mutate the node it is reading —
-# the trajectory's construction steps (connect/clean/model) are the Pipeline being taught, not
-# calls to execute here.
-REPLAYABLE = {"list_datasets", "get_dataset", "list_models", "get_model", "list_projects",
-              "get_project", "model_health", "list_connections", "list_indexes"}
+# Reads ground the design in the workspace. compile_intent is the one replayed action: the engine,
+# rather than the generating model, must decide the selected methodology's pipeline shape.
+REPLAYABLE_READS = {
+    "list_datasets",
+    "get_dataset",
+    "list_models",
+    "get_model",
+    "list_projects",
+    "get_project",
+    "model_health",
+    "list_connections",
+    "list_indexes",
+}
+REPLAYABLE_ACTIONS = {"compile_intent"}
 
 
-def replay(node: Node, trajectory: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+def replay(
+    node: Node,
+    trajectory: list[dict[str, Any]],
+    methodology: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Replace written observations with what the node actually returned.
 
     Returns the trajectory and any problems. A call that fails is recorded as a failure rather
@@ -114,10 +147,17 @@ def replay(node: Node, trajectory: list[dict[str, Any]]) -> tuple[list[dict[str,
     problems: list[str] = []
     for step in trajectory:
         call = step.get("call")
-        if call not in REPLAYABLE:
+        if call not in REPLAYABLE_READS and call not in REPLAYABLE_ACTIONS:
             continue
         try:
-            observed = node.read(call, **(step.get("args") or {}))
+            arguments = dict(step.get("args") or {})
+            if call in REPLAYABLE_ACTIONS:
+                if methodology:
+                    arguments["methodology"] = methodology
+                    step["args"] = arguments
+                observed = node.act(call, **arguments)
+            else:
+                observed = node.read(call, **arguments)
             step["observation"] = observed
             step["observed"] = True
         except Exception as error:  # noqa: BLE001 — the failure IS the observation
@@ -127,4 +167,11 @@ def replay(node: Node, trajectory: list[dict[str, Any]]) -> tuple[list[dict[str,
     if not any(step.get("observed") for step in trajectory):
         problems.append("no call in this trajectory was actually executed — every observation is "
                         "still written rather than observed")
+    if methodology and not any(
+        step.get("call") == "compile_intent" and step.get("observed")
+        for step in trajectory
+    ):
+        problems.append(
+            "the pipeline was not compiled by `compile_intent` with its methodology"
+        )
     return trajectory, problems
