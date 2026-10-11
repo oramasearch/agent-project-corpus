@@ -16,8 +16,6 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from openai import OpenAI
-
 from agent_project_corpus import lake_bus, solutions
 from agent_project_corpus.agent import (
     PROMPT_VERSION,
@@ -30,6 +28,7 @@ from agent_project_corpus.agent import (
     methodology_defects,
     run_defects,
 )
+from agent_project_corpus.model import gateway_client
 from agent_project_corpus.node import Node, replay
 
 CHANGE_WORDS = ("change", "mutat", "modify", "edit", "update", "existing")
@@ -76,7 +75,16 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
         )
         if not solution_turn:
             registry_context += "\n" + methodology_context(methodologies, legacy)
-        response = (client or OpenAI()).chat.completions.create(model=model, messages=[
+        if client is None:
+            # The model is reached through lake with the turn's own key, which counts its tokens
+            # in the turn's workspace (lake#248); this agent holds no provider key.
+            model_url = turn.get("lake_url") or os.environ.get("LAKE_URL", "")
+            model_key = turn.get("lake_token") or turn.get("zetta_token") or ""
+            if not model_url or not model_key:
+                return {"ok": False, "error": "a turn needs lake_url and its lake_token to reach "
+                                              "the model through lake"}
+            client = gateway_client(model_url, model_key)
+        response = client.chat.completions.create(model=model, messages=[
             {"role": "system", "content": (PROMPTS / f"{PROMPT_VERSION}.md").read_text()},
             {"role": "user", "content":
                 f"Produce one `{want}` example. Its profile is THIS workspace, not an invented one: "
