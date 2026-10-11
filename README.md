@@ -129,6 +129,13 @@ is landed in the person's workspace, and the example is answered as
 `{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 
+**The model is reached through lake** (lake#248, lake `docs/api/model-gateway.md`): in lake every
+call goes to `<lake_url>/openai/v1` with the turn's own `lake_token` as the API key (`model.py`), so
+lake counts its tokens in the turn's workspace and enforces the account's model-token limit. The
+service holds no `OPENAI_API_KEY`, and a turn without a lake credential is refused. Only the batch
+CLI, which runs for no workspace, calls OpenAI directly with your own key.
+
+- `model.py`: the OpenAI client pointed at lake's model gateway with the turn's credential.
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
 - `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.

@@ -364,3 +364,36 @@ def test_node_preserves_a_capability_error_code():
     except NodeError as error:
         assert error.code == "not_supported"
         assert "zetta#1042" in str(error)
+
+
+def test_a_turn_calls_its_model_through_lakes_gateway_with_the_turns_key(monkeypatch):
+    """lake#248: the model is lake's `/openai/v1`, with the turn's own key, never a provider key."""
+    import httpx
+
+    from agent_project_corpus import model
+
+    seen: list[httpx.Request] = []
+
+    def gateway(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={
+            "id": "chatcmpl-1", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": json.dumps(EXAMPLE)}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}})
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(service, "gateway_client", lambda url, token: model.gateway_client(
+        url, token, http_client=httpx.Client(transport=httpx.MockTransport(gateway))))
+    workspace = Workspace([{"database": "datasets", "name": "ux_review_churn",
+                            "columns": ["account_id", "churned"], "rows": 200}])
+    answer = service.run_turn({"request": "a churn pipeline", "lake_url": "http://lake:8080",
+                               "lake_token": "lat.task.secret"}, None, workspace, "m")
+    assert answer["ok"], answer
+    assert [str(request.url) for request in seen] == ["http://lake:8080/openai/v1/chat/completions"]
+    assert seen[0].headers["authorization"] == "Bearer lat.task.secret"
+
+    monkeypatch.delenv("LAKE_URL", raising=False)
+    refused = service.run_turn({"request": "a churn pipeline"}, None, workspace, "m")
+    assert not refused["ok"] and "lake_token" in refused["error"]
+    assert len(seen) == 1
