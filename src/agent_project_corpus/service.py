@@ -11,6 +11,7 @@ Turns arrive on lake's agent bus (lake_bus.py); `POST /v1/turn` answers the same
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -179,6 +180,13 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
             "result": {"kind": "project_example", "example": example}}
 
 
+def health() -> dict[str, Any]:
+    """The `GET /healthz` answer: the agent, its installed version and its prompt version."""
+    return {"ok": True, "agent": "agent-project-corpus",
+            "version": importlib.metadata.version("agent-project-corpus"),
+            "prompt_version": PROMPT_VERSION}
+
+
 def serve() -> int:
     token = os.environ.get("AGENT_SERVICE_TOKEN", "")
 
@@ -193,8 +201,7 @@ def serve() -> int:
 
         def do_GET(self) -> None:  # noqa: N802 (the stdlib's name)
             if self.path == "/healthz":
-                self._send(200, {"ok": True, "agent": "agent-project-corpus",
-                                 "prompt_version": PROMPT_VERSION})
+                self._send(200, health())
                 return
             self._send(404, {"ok": False, "error": "not found"})
 

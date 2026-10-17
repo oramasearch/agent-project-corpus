@@ -1,7 +1,7 @@
 [project]
 name = "agent-project-corpus"
 version = "0.1.0"
-description = "Add your description here"
+description = "The Project Corpus Agent: tool-calling training examples for the Project Agent, replayed against a live workspace, as a Lake library agent and a batch generator"
 readme = "README.md"
 authors = [
     { name = "Steve Sperandeo", email = "steve.sperandeo@gmail.com" }
