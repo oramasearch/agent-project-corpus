@@ -115,6 +115,8 @@ the filename copied by the consuming Project Agent image.
 
 ## Status
 
+Current release: [v0.1.0](docs/releases/v0.1.0.md) (all releases: [`docs/releases/`](docs/releases/README.md)).
+
 Generating. Nothing trained on it yet.
 
 ## In lake (lake#263)
@@ -139,4 +141,6 @@ CLI, which runs for no workspace, calls OpenAI directly with your own key.
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
 - `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.
+- `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.
+- `docs/releases/`: one page per release.
 - Tests: `uv run --group dev pytest`.
