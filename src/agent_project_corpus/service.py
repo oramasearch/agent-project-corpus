@@ -6,6 +6,9 @@ profile IS that workspace — only its real tables and columns — then replays 
 so every observation is what the workspace returned (#989), and checks it as the batch CLI does.
 No dataset is landed, and the example is answered but never added to the corpus.
 
+In Lake the turn's credential grants reads only and the agent changes nothing, so a turn's node is
+read-only and a turn is refused before the model runs (#8); the replay above is the batch CLI's.
+
 Turns arrive on lake's agent bus (lake_bus.py); `POST /v1/turn` answers the same for a direct call.
 """
 
@@ -34,6 +37,13 @@ from agent_project_corpus.model import gateway_client
 from agent_project_corpus.node import Node, replay
 
 CHANGE_WORDS = ("change", "mutat", "modify", "edit", "update", "existing")
+
+READ_ONLY_REFUSAL = (
+    "I can't record a worked example in Lake yet. Recording one builds and runs a pipeline in your "
+    "workspace (compile_intent and run, or create_solution and run_solution), and here I may only "
+    "read your workspace: I change nothing in it. "
+    "https://github.com/oramasearch/agent-project-corpus/issues/8"
+)
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
 
@@ -112,8 +122,15 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
         if base is None:
             return {"ok": False, "error": "zetta_base_url is not Lake's workspace route at "
                                           "LAKE_URL; the turn's credential is never sent elsewhere"}
-        node = Node(base_url=base, token=token)
+        # A Lake turn's credential grants reads only (workspace_query, workspace_openapi,
+        # get_agent_task), and Lake's catalogue says this agent changes nothing (#8).
+        node = Node(base_url=base, token=token, read_only=True)
     try:
+        if getattr(node, "read_only", False):
+            # Every example is replayed through actions (compile_intent and run, or
+            # create_solution and run_solution), so a read-only turn is refused before it spends
+            # the person's model tokens on an example it could never record.
+            return {"ok": False, "error": READ_ONLY_REFUSAL}
         solution_entries, solution_registry_unavailable = solutions.discover(node)
         solution_turn = bool(solution_entries)
         methodologies: list[dict[str, Any]] = []
