@@ -16,6 +16,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlsplit
 
 from agent_project_corpus import lake_bus, solutions
 from agent_project_corpus.agent import (
@@ -34,6 +35,52 @@ from agent_project_corpus.node import Node, replay
 
 CHANGE_WORDS = ("change", "mutat", "modify", "edit", "update", "existing")
 
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """`(scheme, host, port)` of an absolute http(s) URL with no user info, or None."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    if scheme not in DEFAULT_PORTS or not parts.hostname or "@" in parts.netloc:
+        return None
+    return scheme, parts.hostname.lower(), port or DEFAULT_PORTS[scheme]
+
+
+def lakes_url() -> str:
+    """Lake's address from this service's environment (`LAKE_URL`), the only place a turn's
+    credential is ever sent; empty when unset."""
+    return os.environ.get("LAKE_URL", "").strip().rstrip("/")
+
+
+def workspace_url(requested: str, lake: str) -> str | None:
+    """The turn's `zetta_base_url` when it is Lake's workspace route, else None.
+
+    Lake hands the agent its read path to the person's workspace
+    (`<LAKE_URL>/w/<workspace>/workspaces/<customer>/zetta`), and the turn's credential is sent
+    there. The address comes from the request, so it is accepted only when it is on Lake's own
+    origin (scheme, host and port of `LAKE_URL`) under `LAKE_URL`'s path, with no user info, query
+    or fragment; anything else would send the bearer to a host the caller chose.
+    """
+    want = _origin(lake)
+    got = _origin(requested)
+    if want is None or got is None or got != want:
+        return None
+    parts, base = urlsplit(requested), urlsplit(lake)
+    if parts.query or parts.fragment or "\\" in requested:
+        return None
+    prefix = base.path.rstrip("/")
+    path = parts.path
+    if prefix and not (path == prefix or path.startswith(prefix + "/")):
+        return None
+    if any(segment in (".", "..") for segment in path.split("/")):
+        return None
+    return requested.rstrip("/")
+
 
 def workspace_tables(node: Any) -> list[dict[str, Any]]:
     listed = node.read("list_datasets") or {}
@@ -49,11 +96,22 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
              model: str | None = None) -> dict[str, Any]:
     request = (turn.get("request") or turn.get("message") or "").strip()
     owned = node is None
+    lake = lakes_url()
+    if owned or client is None:
+        # The turn's credential goes only to Lake at this service's own LAKE_URL, never to an
+        # address the request names (agent-project-corpus#9).
+        if not lake or _origin(lake) is None:
+            return {"ok": False, "error": "LAKE_URL is not set: this agent sends a turn's "
+                                          "credential only to Lake's configured address"}
     if owned:
-        base, token = turn.get("zetta_base_url"), turn.get("zetta_token")
-        if not base or not token:
+        requested, token = turn.get("zetta_base_url"), turn.get("zetta_token")
+        if not requested or not token:
             return {"ok": False, "error": "no workspace: the turn needs zetta_base_url and "
                                           "zetta_token"}
+        base = workspace_url(str(requested), lake)
+        if base is None:
+            return {"ok": False, "error": "zetta_base_url is not Lake's workspace route at "
+                                          "LAKE_URL; the turn's credential is never sent elsewhere"}
         node = Node(base_url=base, token=token)
     try:
         solution_entries, solution_registry_unavailable = solutions.discover(node)
@@ -78,13 +136,14 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
             registry_context += "\n" + methodology_context(methodologies, legacy)
         if client is None:
             # The model is reached through lake with the turn's own key, which counts its tokens
-            # in the turn's workspace (lake#248); this agent holds no provider key.
-            model_url = turn.get("lake_url") or os.environ.get("LAKE_URL", "")
+            # in the turn's workspace (lake#248); this agent holds no provider key. The address is
+            # this service's LAKE_URL; the turn's own `lake_url` is never used, so the key cannot
+            # be sent to a host the caller names (agent-project-corpus#9).
             model_key = turn.get("lake_token") or turn.get("zetta_token") or ""
-            if not model_url or not model_key:
-                return {"ok": False, "error": "a turn needs lake_url and its lake_token to reach "
-                                              "the model through lake"}
-            client = gateway_client(model_url, model_key)
+            if not model_key:
+                return {"ok": False, "error": "a turn needs its lake_token to reach the model "
+                                              "through lake"}
+            client = gateway_client(lake, model_key)
         response = client.chat.completions.create(model=model, messages=[
             {"role": "system", "content": (PROMPTS / f"{PROMPT_VERSION}.md").read_text()},
             {"role": "user", "content":
