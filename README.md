@@ -139,6 +139,7 @@ CLI, which runs for no workspace, calls OpenAI directly with your own key.
 
 - `model.py`: the OpenAI client pointed at lake's model gateway with the turn's credential.
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
+  `POST /v1/turn` requires `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, compared in constant time (`401` otherwise), and fails closed: with `AGENT_SERVICE_TOKEN` unset or empty it refuses every turn with `503`. The operator always sets it; set it yourself for a hand-run service. Turns from lake's bus do not use it.
 - `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.
 - `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.
