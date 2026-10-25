@@ -64,32 +64,40 @@ def test_a_workspace_address_off_lakes_origin_is_refused_before_any_request(
     assert sent == []
 
 
-def test_lakes_workspace_route_is_used_with_the_turns_credential(monkeypatch, sent):
+@pytest.fixture
+def built(monkeypatch):
+    """The arguments of every Node a turn builds."""
+    nodes: list[dict] = []
+    real = service.Node
+
+    def node(**kwargs):
+        nodes.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(service, "Node", node)
+    return nodes
+
+
+def test_lakes_workspace_route_is_used_with_the_turns_credential(monkeypatch, sent, built):
     monkeypatch.setenv("LAKE_URL", LAKE)
     answer = service.run_turn(
         {"request": "x", "zetta_base_url": ROUTE, "zetta_token": "lat.task.secret",
          "lake_token": "lat.task.secret"}
     )
-    # The empty workspace ends the turn before the model, after reading through Lake.
-    assert not answer["ok"] and "no datasets" in answer["error"]
-    assert sent, "the workspace was never read"
-    assert all(
-        request.url.host == "lake-prod.lake.svc.cluster.local"
-        and request.url.port in (None, 80)
-        and request.url.path.startswith("/w/ws-1/workspaces/cust-1/zetta/v1/")
-        for request in sent
-    )
-    assert all(request.headers["authorization"] == "Bearer lat.task.secret" for request in sent)
+    # The route is accepted; the turn then stops because a Lake turn changes nothing (#8).
+    assert answer == {"ok": False, "error": service.READ_ONLY_REFUSAL}
+    assert built == [{"base_url": ROUTE, "token": "lat.task.secret", "read_only": True}]
+    assert sent == []
 
 
-def test_the_default_port_is_the_same_origin(monkeypatch, sent):
+def test_the_default_port_is_the_same_origin(monkeypatch, sent, built):
     monkeypatch.setenv("LAKE_URL", LAKE)
     route = "http://LAKE-PROD.lake.svc.cluster.local/w/ws-1/workspaces/cust-1/zetta"
     answer = service.run_turn(
         {"request": "x", "zetta_base_url": route, "zetta_token": "t", "lake_token": "t"}
     )
-    assert "no datasets" in answer["error"]
-    assert sent
+    assert answer["error"] == service.READ_ONLY_REFUSAL
+    assert [node["base_url"] for node in built] == [route]
 
 
 def test_without_lake_url_no_turn_sends_its_credential(monkeypatch, sent):

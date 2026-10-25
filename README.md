@@ -131,6 +131,15 @@ is landed in the person's workspace, and the example is answered as
 `{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 
+**A Lake turn changes nothing in the workspace, so today it is refused** (#8). Lake grants the turn's
+credential only `workspace_query`, `workspace_openapi` and `get_agent_task`, and its catalogue says
+this agent changes nothing, while every example is replayed through actions (`compile_intent` and
+`run`, or `create_solution` and `run_solution`). The turn's node is read-only (`Node(read_only=True)`
+raises `read_only` on any action without sending it), and the service refuses the turn before the
+model runs, so no model tokens are spent on an example it could never record. How a Lake turn should
+record examples (a read-only replay, a sandbox workspace, or a grant) is open on #8. The batch CLI,
+which runs against a node with its owner token, still replays actions.
+
 **The model is reached through lake** (lake#248, lake `docs/api/model-gateway.md`): in lake every
 call goes to `<LAKE_URL>/openai/v1` with the turn's own `lake_token` as the API key (`model.py`), so
 lake counts its tokens in the turn's workspace and enforces the account's model-token limit. The
