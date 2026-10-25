@@ -132,10 +132,17 @@ is landed in the person's workspace, and the example is answered as
 example}}`, never added to the corpus.
 
 **The model is reached through lake** (lake#248, lake `docs/api/model-gateway.md`): in lake every
-call goes to `<lake_url>/openai/v1` with the turn's own `lake_token` as the API key (`model.py`), so
+call goes to `<LAKE_URL>/openai/v1` with the turn's own `lake_token` as the API key (`model.py`), so
 lake counts its tokens in the turn's workspace and enforces the account's model-token limit. The
 service holds no `OPENAI_API_KEY`, and a turn without a lake credential is refused. Only the batch
 CLI, which runs for no workspace, calls OpenAI directly with your own key.
+
+**A turn's credential goes only to Lake at this service's own `LAKE_URL`** (#9). The model address is
+always `LAKE_URL`; a turn's `lake_url` is ignored. The workspace address, `zetta_base_url`, is Lake's
+workspace route (`<LAKE_URL>/w/<workspace>/workspaces/<customer>/zetta`) and is accepted only on
+`LAKE_URL`'s origin (scheme, host and port) under its path, with no user info, query or fragment;
+any other address refuses the turn before a request is made. With `LAKE_URL` unset, every turn is
+refused.
 
 - `model.py`: the OpenAI client pointed at lake's model gateway with the turn's credential.
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
