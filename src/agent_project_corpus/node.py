@@ -31,7 +31,11 @@ class NodeError(RuntimeError):
 class Node:
     """Read/act against a live Zetta node. Raises rather than returning a plausible empty result."""
 
-    def __init__(self, base_url: str | None = None, token: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, token: str | None = None,
+                 read_only: bool = False) -> None:
+        # A read-only node (a Lake turn's) never sends an action: Lake grants the turn's
+        # credential reads only, and its catalogue says this agent changes nothing (#8).
+        self.read_only = read_only
         self.base = (base_url or os.environ["ZETTA_BASE_URL"]).rstrip("/")
         self.client = httpx.Client(
             base_url=self.base,
@@ -52,6 +56,11 @@ class Node:
         return self._value(response)
 
     def act(self, capability: str, **body: Any) -> Any:
+        if self.read_only:
+            raise NodeError(
+                "read_only",
+                f"`{capability}` changes the workspace, and this turn may only read it",
+            )
         response = self.client.post(f"/v1/{capability}", json=body)
         return self._value(response)
 

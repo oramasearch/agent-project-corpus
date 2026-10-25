@@ -115,7 +115,7 @@ the filename copied by the consuming Project Agent image.
 
 ## Status
 
-Current release: [v0.1.0](docs/releases/v0.1.0.md) (all releases: [`docs/releases/`](docs/releases/README.md)).
+Current release: [v0.2.0](docs/releases/v0.2.0.md) (all releases: [`docs/releases/`](docs/releases/README.md)).
 
 Generating. Nothing trained on it yet.
 
@@ -131,14 +131,31 @@ is landed in the person's workspace, and the example is answered as
 `{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 
+**A Lake turn changes nothing in the workspace, so today it is refused** (#8). Lake grants the turn's
+credential only `workspace_query`, `workspace_openapi` and `get_agent_task`, and its catalogue says
+this agent changes nothing, while every example is replayed through actions (`compile_intent` and
+`run`, or `create_solution` and `run_solution`). The turn's node is read-only (`Node(read_only=True)`
+raises `read_only` on any action without sending it), and the service refuses the turn before the
+model runs, so no model tokens are spent on an example it could never record. How a Lake turn should
+record examples (a read-only replay, a sandbox workspace, or a grant) is open on #8. The batch CLI,
+which runs against a node with its owner token, still replays actions.
+
 **The model is reached through lake** (lake#248, lake `docs/api/model-gateway.md`): in lake every
-call goes to `<lake_url>/openai/v1` with the turn's own `lake_token` as the API key (`model.py`), so
+call goes to `<LAKE_URL>/openai/v1` with the turn's own `lake_token` as the API key (`model.py`), so
 lake counts its tokens in the turn's workspace and enforces the account's model-token limit. The
 service holds no `OPENAI_API_KEY`, and a turn without a lake credential is refused. Only the batch
 CLI, which runs for no workspace, calls OpenAI directly with your own key.
 
+**A turn's credential goes only to Lake at this service's own `LAKE_URL`** (#9). The model address is
+always `LAKE_URL`; a turn's `lake_url` is ignored. The workspace address, `zetta_base_url`, is Lake's
+workspace route (`<LAKE_URL>/w/<workspace>/workspaces/<customer>/zetta`) and is accepted only on
+`LAKE_URL`'s origin (scheme, host and port) under its path, with no user info, query or fragment;
+any other address refuses the turn before a request is made. With `LAKE_URL` unset, every turn is
+refused.
+
 - `model.py`: the OpenAI client pointed at lake's model gateway with the turn's credential.
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
+  `POST /v1/turn` requires `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, compared in constant time (`401` otherwise), and fails closed: with `AGENT_SERVICE_TOKEN` unset or empty it refuses every turn with `503`. The operator always sets it; set it yourself for a hand-run service. Turns from lake's bus do not use it.
 - `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.
 - `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.

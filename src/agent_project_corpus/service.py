@@ -6,16 +6,21 @@ profile IS that workspace — only its real tables and columns — then replays 
 so every observation is what the workspace returned (#989), and checks it as the batch CLI does.
 No dataset is landed, and the example is answered but never added to the corpus.
 
+In Lake the turn's credential grants reads only and the agent changes nothing, so a turn's node is
+read-only and a turn is refused before the model runs (#8); the replay above is the batch CLI's.
+
 Turns arrive on lake's agent bus (lake_bus.py); `POST /v1/turn` answers the same for a direct call.
 """
 
 from __future__ import annotations
 
+import hmac
 import importlib.metadata
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlsplit
 
 from agent_project_corpus import lake_bus, solutions
 from agent_project_corpus.agent import (
@@ -34,6 +39,59 @@ from agent_project_corpus.node import Node, replay
 
 CHANGE_WORDS = ("change", "mutat", "modify", "edit", "update", "existing")
 
+READ_ONLY_REFUSAL = (
+    "I can't record a worked example in Lake yet. Recording one builds and runs a pipeline in your "
+    "workspace (compile_intent and run, or create_solution and run_solution), and here I may only "
+    "read your workspace: I change nothing in it. "
+    "https://github.com/oramasearch/agent-project-corpus/issues/8"
+)
+
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """`(scheme, host, port)` of an absolute http(s) URL with no user info, or None."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    if scheme not in DEFAULT_PORTS or not parts.hostname or "@" in parts.netloc:
+        return None
+    return scheme, parts.hostname.lower(), port or DEFAULT_PORTS[scheme]
+
+
+def lakes_url() -> str:
+    """Lake's address from this service's environment (`LAKE_URL`), the only place a turn's
+    credential is ever sent; empty when unset."""
+    return os.environ.get("LAKE_URL", "").strip().rstrip("/")
+
+
+def workspace_url(requested: str, lake: str) -> str | None:
+    """The turn's `zetta_base_url` when it is Lake's workspace route, else None.
+
+    Lake hands the agent its read path to the person's workspace
+    (`<LAKE_URL>/w/<workspace>/workspaces/<customer>/zetta`), and the turn's credential is sent
+    there. The address comes from the request, so it is accepted only when it is on Lake's own
+    origin (scheme, host and port of `LAKE_URL`) under `LAKE_URL`'s path, with no user info, query
+    or fragment; anything else would send the bearer to a host the caller chose.
+    """
+    want = _origin(lake)
+    got = _origin(requested)
+    if want is None or got is None or got != want:
+        return None
+    parts, base = urlsplit(requested), urlsplit(lake)
+    if parts.query or parts.fragment or "\\" in requested:
+        return None
+    prefix = base.path.rstrip("/")
+    path = parts.path
+    if prefix and not (path == prefix or path.startswith(prefix + "/")):
+        return None
+    if any(segment in (".", "..") for segment in path.split("/")):
+        return None
+    return requested.rstrip("/")
+
 
 def workspace_tables(node: Any) -> list[dict[str, Any]]:
     listed = node.read("list_datasets") or {}
@@ -49,13 +107,31 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
              model: str | None = None) -> dict[str, Any]:
     request = (turn.get("request") or turn.get("message") or "").strip()
     owned = node is None
+    lake = lakes_url()
+    if owned or client is None:
+        # The turn's credential goes only to Lake at this service's own LAKE_URL, never to an
+        # address the request names (agent-project-corpus#9).
+        if not lake or _origin(lake) is None:
+            return {"ok": False, "error": "LAKE_URL is not set: this agent sends a turn's "
+                                          "credential only to Lake's configured address"}
     if owned:
-        base, token = turn.get("zetta_base_url"), turn.get("zetta_token")
-        if not base or not token:
+        requested, token = turn.get("zetta_base_url"), turn.get("zetta_token")
+        if not requested or not token:
             return {"ok": False, "error": "no workspace: the turn needs zetta_base_url and "
                                           "zetta_token"}
-        node = Node(base_url=base, token=token)
+        base = workspace_url(str(requested), lake)
+        if base is None:
+            return {"ok": False, "error": "zetta_base_url is not Lake's workspace route at "
+                                          "LAKE_URL; the turn's credential is never sent elsewhere"}
+        # A Lake turn's credential grants reads only (workspace_query, workspace_openapi,
+        # get_agent_task), and Lake's catalogue says this agent changes nothing (#8).
+        node = Node(base_url=base, token=token, read_only=True)
     try:
+        if getattr(node, "read_only", False):
+            # Every example is replayed through actions (compile_intent and run, or
+            # create_solution and run_solution), so a read-only turn is refused before it spends
+            # the person's model tokens on an example it could never record.
+            return {"ok": False, "error": READ_ONLY_REFUSAL}
         solution_entries, solution_registry_unavailable = solutions.discover(node)
         solution_turn = bool(solution_entries)
         methodologies: list[dict[str, Any]] = []
@@ -78,13 +154,14 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
             registry_context += "\n" + methodology_context(methodologies, legacy)
         if client is None:
             # The model is reached through lake with the turn's own key, which counts its tokens
-            # in the turn's workspace (lake#248); this agent holds no provider key.
-            model_url = turn.get("lake_url") or os.environ.get("LAKE_URL", "")
+            # in the turn's workspace (lake#248); this agent holds no provider key. The address is
+            # this service's LAKE_URL; the turn's own `lake_url` is never used, so the key cannot
+            # be sent to a host the caller names (agent-project-corpus#9).
             model_key = turn.get("lake_token") or turn.get("zetta_token") or ""
-            if not model_url or not model_key:
-                return {"ok": False, "error": "a turn needs lake_url and its lake_token to reach "
-                                              "the model through lake"}
-            client = gateway_client(model_url, model_key)
+            if not model_key:
+                return {"ok": False, "error": "a turn needs its lake_token to reach the model "
+                                              "through lake"}
+            client = gateway_client(lake, model_key)
         response = client.chat.completions.create(model=model, messages=[
             {"role": "system", "content": (PROMPTS / f"{PROMPT_VERSION}.md").read_text()},
             {"role": "user", "content":
@@ -187,6 +264,22 @@ def health() -> dict[str, Any]:
             "prompt_version": PROMPT_VERSION}
 
 
+def turn_refusal(authorization: str | None, token: str) -> tuple[int, str] | None:
+    """Why `POST /v1/turn` is refused, as `(status, error)`, or None when the caller may proceed.
+
+    The route fails closed: with `AGENT_SERVICE_TOKEN` unset or empty every turn is refused, so a
+    service started without it is never open. The bearer is compared in constant time
+    (`hmac.compare_digest` over bytes), so the comparison's timing says nothing about the token.
+    """
+    if not token:
+        return 503, "AGENT_SERVICE_TOKEN is not set; this service refuses every turn"
+    expected = f"Bearer {token}".encode()
+    supplied = (authorization or "").encode("utf-8", "surrogateescape")
+    if not hmac.compare_digest(supplied, expected):
+        return 401, "unauthorized"
+    return None
+
+
 def serve() -> int:
     token = os.environ.get("AGENT_SERVICE_TOKEN", "")
 
@@ -209,8 +302,10 @@ def serve() -> int:
             if self.path != "/v1/turn":
                 self._send(404, {"ok": False, "error": "not found"})
                 return
-            if token and self.headers.get("Authorization") != f"Bearer {token}":
-                self._send(401, {"ok": False, "error": "unauthorized"})
+            refusal = turn_refusal(self.headers.get("Authorization"), token)
+            if refusal is not None:
+                status, error = refusal
+                self._send(status, {"ok": False, "error": error})
                 return
             try:
                 turn = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))

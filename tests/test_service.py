@@ -387,13 +387,20 @@ def test_a_turn_calls_its_model_through_lakes_gateway_with_the_turns_key(monkeyp
         url, token, http_client=httpx.Client(transport=httpx.MockTransport(gateway))))
     workspace = Workspace([{"database": "datasets", "name": "ux_review_churn",
                             "columns": ["account_id", "churned"], "rows": 200}])
-    answer = service.run_turn({"request": "a churn pipeline", "lake_url": "http://lake:8080",
+    monkeypatch.setenv("LAKE_URL", "http://lake:8080")
+    # The turn's own lake_url is never used: the key goes to this service's LAKE_URL (#9).
+    answer = service.run_turn({"request": "a churn pipeline", "lake_url": "http://elsewhere:9",
                                "lake_token": "lat.task.secret"}, None, workspace, "m")
     assert answer["ok"], answer
     assert [str(request.url) for request in seen] == ["http://lake:8080/openai/v1/chat/completions"]
     assert seen[0].headers["authorization"] == "Bearer lat.task.secret"
 
-    monkeypatch.delenv("LAKE_URL", raising=False)
     refused = service.run_turn({"request": "a churn pipeline"}, None, workspace, "m")
     assert not refused["ok"] and "lake_token" in refused["error"]
+    assert len(seen) == 1
+
+    monkeypatch.delenv("LAKE_URL", raising=False)
+    refused = service.run_turn({"request": "a churn pipeline", "lake_url": "http://lake:8080",
+                                "lake_token": "lat.task.secret"}, None, workspace, "m")
+    assert not refused["ok"] and "LAKE_URL is not set" in refused["error"]
     assert len(seen) == 1
