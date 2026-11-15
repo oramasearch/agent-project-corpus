@@ -1,9 +1,8 @@
 # agent-project-corpus — Claude rules
 
 Training corpus for **the main agent**: the one that builds and operates catalogue Solutions, and
-creates or mutates Pipelines
-([zetta#986](https://github.com/oramasearch/zetta/issues/986)). Read
-[`zetta-bridge/docs/agent-scaffold.md`](../../docs/agent-scaffold.md) first.
+creates or mutates Pipelines. Read `README.md` first; `AGENTS.md` carries the conventions that apply
+to every change.
 
 ## It is a tool-calling agent, so the corpus is trajectories
 
@@ -22,8 +21,7 @@ the defect that made one pipeline shape serve churn, lead scoring and collection
 RLVR sharpens what a policy already sometimes does; it cannot originate a capability. A campaign
 against a policy that never emits a pipeline returns a uniformly zero reward, and a group with
 equal rewards has **zero advantage** — GRPO takes a null step and the run cannot learn however long
-it goes. That was measured
-([zetta#859](https://github.com/oramasearch/zetta/issues/859)), not assumed.
+it goes. That was measured, not assumed.
 
 So this corpus has one job: **get the policy to sometimes build a correct solution or pipeline.**
 The loop does the rest — and it works: reward 0.52 → 1.00 over 16 steps against the deterministic
@@ -57,11 +55,11 @@ only runnable methodology. Name this fallback in the answer.
 
 ```sh
 uv sync
-export OPENAI_API_KEY=...      # or: source ~/.zshrc
+export OPENAI_API_KEY=...
 uv run agent-project-corpus --examples 20
 ```
 
-uv, never pip. Prompts versioned — a prompt change is a model change.
+Tests: `uv run --group dev pytest`. uv, never pip. Prompts versioned — a prompt change is a model change.
 
 ## When a check rejects most generations
 
