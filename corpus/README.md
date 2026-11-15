@@ -54,7 +54,7 @@ it from there — reward rose 0.52 → 1.00 over 16 steps against the determinis
 
 The examples are synthetic. A language model wrote them (OpenAI `gpt-4o` by default, through the
 generator in this repository) from situations and registries Orama wrote; no record is drawn from
-real customer data. Orama Search Inc. releases them under the MIT License (see the repository's
+real customer data. OramaSearch, Inc. releases them under the MIT License (see the repository's
 [LICENSE](../LICENSE)).
 
 The model provider's terms govern how its output may be used. OpenAI's terms assign the output to
