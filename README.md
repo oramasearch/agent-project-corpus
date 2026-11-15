@@ -1,8 +1,7 @@
 # agent-project-corpus
 
 Training corpus for **the main agent** — the one that builds and operates catalogue Solutions,
-and creates or mutates projects
-([zetta#986](https://github.com/oramasearch/zetta/issues/986)).
+and creates or mutates projects.
 
 It takes a **project profile** (what Auto-Suggest proposed) plus the user's intent, and builds a
 catalogue Solution or Pipeline. It changes a Pipeline when asked. That is the product.
@@ -30,8 +29,7 @@ collections alike.
 
 **RLVR** then sharpens it against the deterministic graders — the agent proposes calls, the sandbox
 runs them, the grader scores the end state, and the policy updates. That loop is wired and
-verified: reward rose 0.52 → 1.00 over 16 steps
-([zetta#859](https://github.com/oramasearch/zetta/issues/859)).
+verified: reward rose 0.52 → 1.00 over 16 steps.
 
 **The order is not a preference.** RLVR sharpens what a policy already sometimes does; it cannot
 originate a capability. A campaign against a policy that never emits a pipeline returns a uniformly
@@ -60,7 +58,7 @@ its correctness profile is training data; one that merely looks plausible is not
 the same ones RLVR will use, so an SFT example that grades well is already in the shape the reward
 expects.
 
-## The observations are real (#989)
+## The observations are real
 
 Each example's profile is **landed on a live node** and the trajectory's read calls are **replayed
 against it**, so `observation` is what `/v1` actually returned rather than what the generating
@@ -78,7 +76,7 @@ Examples record `observations_real`. Batch generation requires `ZETTA_BASE_URL` 
 without a live engine, solution or methodology support and the resulting run cannot be verified,
 so no example is written.
 
-## Runnable methodologies only (#1)
+## Runnable methodologies only
 
 When no solution entries are available, the agent reads `list_methodologies`. Prompt v3 may select
 only an entry marked `runnable`, and each methodology example names that entry's `methodology` id
@@ -90,7 +88,7 @@ If `list_methodologies` returns `unknown_capability`, the workspace predates the
 allows only legacy M-1 GBDT classification and says that it used this fallback. The runnable list is
 otherwise never kept in this repository.
 
-## Runnable solutions only (#3)
+## Runnable solutions only
 
 At the start of each generation turn, the agent reads `list_solutions`. Prompt v3 may select only
 an entry the live response marks runnable, then `get_solution` reads that entry's current levels,
@@ -119,19 +117,19 @@ Current release: [v0.2.0](docs/releases/v0.2.0.md) (all releases: [`docs/release
 
 Generating. Nothing trained on it yet.
 
-## In lake (lake#263)
+## In lake
 
 A library agent of lake: a person asks it to record how a solution or pipeline is built (or how a
 pipeline is changed, a `mutate` example) **on their own data**. One turn starts with
 `list_solutions`; a solution turn also reads `get_solution`, while a workspace without entries uses
 `list_methodologies`. It then reads `list_datasets` and asks for an example whose profile is that
 workspace (only its real tables and columns), and replays the example's workspace reads and actions
-so every observation is what the workspace returned (#989). `land_profile` is not used: no dataset
+so every observation is what the workspace returned. `land_profile` is not used: no dataset
 is landed in the person's workspace, and the example is answered as
 `{reply, result: {kind: project_example,
 example}}`, never added to the corpus.
 
-**A Lake turn changes nothing in the workspace, so today it is refused** (#8). Lake grants the turn's
+**A Lake turn changes nothing in the workspace, so today it is refused**. Lake grants the turn's
 credential only `workspace_query`, `workspace_openapi` and `get_agent_task`, and its catalogue says
 this agent changes nothing, while every example is replayed through actions (`compile_intent` and
 `run`, or `create_solution` and `run_solution`). The turn's node is read-only (`Node(read_only=True)`
@@ -146,7 +144,7 @@ lake counts its tokens in the turn's workspace and enforces the account's model-
 service holds no `OPENAI_API_KEY`, and a turn without a lake credential is refused. Only the batch
 CLI, which runs for no workspace, calls OpenAI directly with your own key.
 
-**A turn's credential goes only to Lake at this service's own `LAKE_URL`** (#9). The model address is
+**A turn's credential goes only to Lake at this service's own `LAKE_URL`**. The model address is
 always `LAKE_URL`; a turn's `lake_url` is ignored. The workspace address, `zetta_base_url`, is Lake's
 workspace route (`<LAKE_URL>/w/<workspace>/workspaces/<customer>/zetta`) and is accepted only on
 `LAKE_URL`'s origin (scheme, host and port) under its path, with no user info, query or fragment;
@@ -159,6 +157,7 @@ refused.
 - `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.
 - The Dockerfile pins its bases by multi-platform index digest (lake#1003): `python:3.12-slim@sha256:5e2bdb1b…` for both stages and `ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85a…`. Moving one is a reviewed change of its digest.
+- `Dockerfile`: the image `oramasearch/agent-project-corpus`.
 - `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.
 - `docs/releases/`: one page per release.
 - Tests: `uv run --group dev pytest`.
