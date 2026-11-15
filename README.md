@@ -153,11 +153,25 @@ workspace route (`<LAKE_URL>/w/<workspace>/workspaces/<customer>/zetta`) and is 
 any other address refuses the turn before a request is made. With `LAKE_URL` unset, every turn is
 refused.
 
+**No task credential reaches this process** ([lake#871](https://github.com/oramasearch/lake/issues/871)).
+Each bus claim asks for `credentials: by_reference`: Lake keeps the task's credential and answers
+the body without it. Every call the turn makes (the workspace's Zetta through Lake, and the model
+through the gateway) then carries this agent's bus credential and the header
+`X-Lake-Agent-Task: <task id>`, which Lake honours only while that task is claimed and `Running` on
+this agent. The bus calls themselves never send the header, and neither does a node built with the
+environment's `ZETTA_TOKEN`. A Lake from before lake#871 refuses the `credentials` field before
+claiming anything; the claim is then asked again without it, and the body's own credentials are
+used as before, with no task header. Lake removes the in-body mode once every library agent claims
+by reference.
+
 - `model.py`: the OpenAI client pointed at lake's model gateway with the turn's credential.
 - `service.py`: `run_turn`, and `agent-project-corpus-serve` (`GET /healthz`, `POST /v1/turn`).
   `POST /v1/turn` requires `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, compared in constant time (`401` otherwise), and fails closed: with `AGENT_SERVICE_TOKEN` unset or empty it refuses every turn with `503`. The operator always sets it; set it yourself for a hand-run service. Turns from lake's bus do not use it.
-- `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
+- `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`, claiming each by
+  reference (`task_credentials`, `task_headers`; lake#871).
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.
 - `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.
 - `docs/releases/`: one page per release.
-- Tests: `uv run --group dev pytest`.
+- Tests: `uv run --group dev pytest`. `tests/test_by_reference.py` (lake#871) covers the claim by
+  reference with its fallback on an older Lake, and the bus credential with `X-Lake-Agent-Task` on
+  the node and model calls of a by-reference turn, never on an in-body turn or with `ZETTA_TOKEN`.
