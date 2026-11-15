@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Live solution discovery and checks for solution worked examples."""
 
 from __future__ import annotations

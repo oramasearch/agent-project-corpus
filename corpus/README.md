@@ -1,5 +1,5 @@
 ---
-license: other
+license: mit
 tags: [sft, agent, tool-use, trajectories, synthetic]
 ---
 
@@ -49,3 +49,15 @@ it from there — reward rose 0.52 → 1.00 over 16 steps against the determinis
 - **Nothing has been trained on this**, so no evidence it teaches what it intends to.
 - **Synthetic**, and the observations are written rather than returned by a real node — a
   trajectory here is what a good one *looks* like, not one that was actually executed.
+
+## License and provenance
+
+The examples are synthetic. A language model wrote them (OpenAI `gpt-4o` by default, through the
+generator in this repository) from situations and registries Orama wrote; no record is drawn from
+real customer data. Orama Search Inc. releases them under the MIT License (see the repository's
+[LICENSE](../LICENSE)).
+
+The model provider's terms govern how its output may be used. OpenAI's terms assign the output to
+the user and forbid using it to develop models that compete with OpenAI
+(https://openai.com/policies/services-agreement/). Training your own model on these examples is
+your use, under those terms as they apply to you.

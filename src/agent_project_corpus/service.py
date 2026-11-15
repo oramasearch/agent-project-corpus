@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """The Project Corpus Generator as a lake library agent (lake#263): live worked examples.
 
 A person asks it to record how a solution or pipeline is built (or how a pipeline is changed) on

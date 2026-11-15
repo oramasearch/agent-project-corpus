@@ -161,3 +161,9 @@ refused.
 - `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.
 - `docs/releases/`: one page per release.
 - Tests: `uv run --group dev pytest`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party components and their licenses are in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Contributions are welcome under the Developer
+Certificate of Origin; see [CONTRIBUTING.md](CONTRIBUTING.md).
