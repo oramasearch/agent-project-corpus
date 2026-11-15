@@ -383,7 +383,7 @@ def test_a_turn_calls_its_model_through_lakes_gateway_with_the_turns_key(monkeyp
             "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}})
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(service, "gateway_client", lambda url, token: model.gateway_client(
+    monkeypatch.setattr(service, "gateway_client", lambda url, token, **kw: model.gateway_client(
         url, token, http_client=httpx.Client(transport=httpx.MockTransport(gateway))))
     workspace = Workspace([{"database": "datasets", "name": "ux_review_churn",
                             "columns": ["account_id", "churned"], "rows": 200}])

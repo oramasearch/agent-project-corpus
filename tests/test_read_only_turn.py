@@ -69,7 +69,7 @@ def test_replay_on_a_read_only_node_records_every_action_as_refused(sent):
 
 def test_a_lake_turn_is_refused_before_the_model_and_sends_no_action(monkeypatch, sent):
     monkeypatch.setattr(
-        service, "gateway_client", lambda url, token: pytest.fail("the model was called")
+        service, "gateway_client", lambda url, token, **kw: pytest.fail("the model was called")
     )
     monkeypatch.setenv("LAKE_URL", "http://lake")
     answer = service.run_turn(

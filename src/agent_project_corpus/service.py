@@ -125,7 +125,9 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
                                           "LAKE_URL; the turn's credential is never sent elsewhere"}
         # A Lake turn's credential grants reads only (workspace_query, workspace_openapi,
         # get_agent_task), and Lake's catalogue says this agent changes nothing (#8).
-        node = Node(base_url=base, token=token, read_only=True)
+        # `X-Lake-Agent-Task` when the turn was claimed by reference (lake#871).
+        node = Node(base_url=base, token=token, read_only=True,
+                    headers=lake_bus.task_headers(turn))
     try:
         if getattr(node, "read_only", False):
             # Every example is replayed through actions (compile_intent and run, or
@@ -161,7 +163,7 @@ def run_turn(turn: dict[str, Any], client: Any = None, node: Any = None,
             if not model_key:
                 return {"ok": False, "error": "a turn needs its lake_token to reach the model "
                                               "through lake"}
-            client = gateway_client(lake, model_key)
+            client = gateway_client(lake, model_key, headers=lake_bus.task_headers(turn))
         response = client.chat.completions.create(model=model, messages=[
             {"role": "system", "content": (PROMPTS / f"{PROMPT_VERSION}.md").read_text()},
             {"role": "user", "content":

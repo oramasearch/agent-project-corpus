@@ -31,7 +31,7 @@ def sent(monkeypatch):
 
     monkeypatch.setattr(node_module.httpx, "Client", client)
     monkeypatch.setattr(
-        service, "gateway_client", lambda url, token: pytest.fail(f"model called at {url}")
+        service, "gateway_client", lambda url, token, **kw: pytest.fail(f"model called at {url}")
     )
     return requests
 
