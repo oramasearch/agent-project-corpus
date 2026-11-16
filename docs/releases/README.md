@@ -10,6 +10,7 @@ built from the tag; it is never produced by a second build.
 
 | Release | Date | Summary |
 |---|---|---|
+| [v0.3.0](v0.3.0.md) | 2026-11-16 | A minor release: the licence, the security policy, base images pinned by digest and the public-tree cleanup (placeholder ids in the replayed example) |
 | [v0.2.0](v0.2.0.md) | 2026-10-25 | Security-review fixes (constant-time service token, refused when unset; a turn's credential only to the service's own `LAKE_URL`) and a behaviour change: Lake turns are refused until the sandbox workspace |
 | [v0.1.0](v0.1.0.md) | 2026-10-17 | The first release: the Project Corpus Agent as a Lake library agent (agent bus, `/v1/turn`, model through Lake's gateway), prompt v3 with runnable solution and methodology checks and replay, and the batch command line |
 
