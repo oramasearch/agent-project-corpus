@@ -158,6 +158,7 @@ refused.
   `POST /v1/turn` requires `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, compared in constant time (`401` otherwise), and fails closed: with `AGENT_SERVICE_TOKEN` unset or empty it refuses every turn with `503`. The operator always sets it; set it yourself for a hand-run service. Turns from lake's bus do not use it.
 - `lake_bus.py`: takes turns from lake's agent bus with its own `AGENT_BUS_TOKEN`.
 - `Dockerfile`: private image `oramasearch/agent-project-corpus`.
+- The Dockerfile pins its bases by multi-platform index digest (lake#1003): `python:3.12-slim@sha256:5e2bdb1b…` for both stages and `ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85a…`. Moving one is a reviewed change of its digest.
 - `docs/solutions/`, `docs/methodologies/`: the solution and methodology checks.
 - `docs/releases/`: one page per release.
 - Tests: `uv run --group dev pytest`.
