@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Project creation/mutation corpus agent."""
 
 __all__ = ["main"]

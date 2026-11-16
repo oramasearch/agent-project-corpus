@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """The Project Corpus Generator as a lake library agent (lake#263): live worked examples.
 
 A person asks it to record how a solution or pipeline is built (or how a pipeline is changed) on
@@ -42,8 +44,7 @@ CHANGE_WORDS = ("change", "mutat", "modify", "edit", "update", "existing")
 READ_ONLY_REFUSAL = (
     "I can't record a worked example in Lake yet. Recording one builds and runs a pipeline in your "
     "workspace (compile_intent and run, or create_solution and run_solution), and here I may only "
-    "read your workspace: I change nothing in it. "
-    "https://github.com/oramasearch/agent-project-corpus/issues/8"
+    "read your workspace: I change nothing in it."
 )
 
 DEFAULT_PORTS = {"http": 80, "https": 443}

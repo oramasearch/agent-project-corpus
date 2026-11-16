@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """The version is set once, in pyproject.toml, and every release of it has a notes page."""
 
 from __future__ import annotations

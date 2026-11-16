@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Generate solution-operation and project creation/mutation examples.
 
 This trains the MAIN agent — the one that builds Pipelines and changes them. It is a tool-calling
