@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# SPDX-License-Identifier: MIT
+
 # The Project Corpus Generator as a lake library agent (lake#263): private on Docker Hub as
 # oramasearch/agent-project-corpus. It records one worked example on the person's own data per
 # turn, reading their workspace through lake; it lands and writes nothing.

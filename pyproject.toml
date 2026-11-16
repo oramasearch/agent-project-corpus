@@ -2,6 +2,7 @@
 name = "agent-project-corpus"
 version = "0.2.0"
 description = "The Project Corpus Agent: tool-calling training examples for the Project Agent, replayed against a live workspace, as a Lake library agent and a batch generator"
+license = "MIT"
 readme = "README.md"
 authors = [
     { name = "Steve Sperandeo", email = "steve.sperandeo@gmail.com" }

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Walk a trajectory against a REAL node, so the observations were actually observed.
 
 The corpus previously carried observations written by the generating model. They were coherent by

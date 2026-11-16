@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """A Lake turn changes nothing in the person's workspace (#8).
 
 Lake grants this agent's task credential only `workspace_query`, `workspace_openapi` and

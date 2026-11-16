@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """`POST /v1/turn` requires the service token, compared in constant time, and fails closed (agent-project-corpus#13)."""
 
 from __future__ import annotations

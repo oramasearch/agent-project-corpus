@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """The Project Corpus Generator as a lake library agent (lake#263): a worked example on your data,
 its observations replayed against your workspace, nothing written."""
 
