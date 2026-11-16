@@ -5,7 +5,7 @@ description = "The Project Corpus Agent: tool-calling training examples for the 
 license = "MIT"
 readme = "README.md"
 authors = [
-    { name = "Steve Sperandeo", email = "steve.sperandeo@gmail.com" }
+    { name = "OramaSearch, Inc." }
 ]
 requires-python = ">=3.12"
 dependencies = [
