@@ -3,16 +3,16 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "agent-project-corpus-v0.3.0",
-  "documentNamespace": "https://github.com/oramasearch/agent-project-corpus/sbom/4631ab51d55cfd31daa6fff59dcdc12061541c8d",
+  "documentNamespace": "https://github.com/oramasearch/agent-project-corpus/sbom/f6c4ec0704df71c405421d875389d8bf297da98c",
   "creationInfo": {
-    "created": "2026-11-16T07:26:07Z",
+    "created": "2026-11-16T07:32:32Z",
     "creators": [
       "Organization: OramaSearch, Inc.",
       "Tool: tools/sbom.py",
       "Tool: syft"
     ],
     "licenseListVersion": "3.29",
-    "comment": "Made from source commit 4631ab51d55cfd31daa6fff59dcdc12061541c8d by tools/sbom.py."
+    "comment": "Made from source commit f6c4ec0704df71c405421d875389d8bf297da98c by tools/sbom.py."
   },
   "documentDescribes": [
     "SPDXRef-DocumentRoot"
